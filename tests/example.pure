@@ -1,0 +1,3 @@
+main := fun(x) {
+  print(x[0])
+}
