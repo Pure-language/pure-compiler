@@ -1,0 +1,49 @@
+cabal-version:      2.4
+name:               pure
+version:            0.1.0.0
+
+-- A short (one-line) description of the package.
+-- synopsis:
+
+-- A longer description of the package.
+-- description:
+
+-- A URL where users can report bugs.
+-- bug-reports:
+
+-- The license under which the package is released.
+-- license:
+author:             thomasvergne
+maintainer:         thomas.vergne.contact@gmail.com
+
+-- A copyright notice.
+-- copyright:
+-- category:
+extra-source-files: CHANGELOG.md
+
+executable pure
+    main-is:          Main.hs
+
+    other-modules:
+        Core.Parser.AST
+            Core.Parser.AST.Expression
+            Core.Parser.AST.Literal
+        Core.Parser.Parser
+
+        Core.TypeChecking.Type
+            Core.TypeChecking.Type.Definition
+            Core.TypeChecking.Type.Methods
+        Core.TypeChecking.Substitution
+        Core.TypeChecking.Unification
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    
+        base ^>=4.14.3.0
+      , parsec
+      , diagnose
+      , containers
+      , semialign
+      , these
+      , mtl
+    hs-source-dirs:   app
+    default-language: Haskell2010
