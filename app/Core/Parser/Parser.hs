@@ -9,8 +9,9 @@ module Core.Parser.Parser where
   import Text.Parsec.Token (GenTokenParser)
   import Data.Functor.Identity (Identity)
   import Control.Applicative (Alternative(some))
-  import Core.Parser.AST (Statement(..), Expression(..), Located(..), Literal(..), Declaration(..))
-
+  import Core.Parser.AST
+  import Debug.Trace (traceShow)
+  
   {- LEXER PART -}
   languageDef =
     emptyDef {  Token.commentStart    = "/*"
@@ -18,7 +19,7 @@ module Core.Parser.Parser where
               , Token.commentLine     = "//"
               , Token.identStart      = letter
               , Token.identLetter     = alphaNum
-              , Token.reservedNames   = [":=", "->", "fun", "if", "else", "return"]
+              , Token.reservedNames   = ["let", "=", "fun", "if", "else", "return"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->"] }
 
   lexer :: GenTokenParser String u Identity
@@ -67,18 +68,11 @@ module Core.Parser.Parser where
 
   -- Type parsing --
 
-  declaration :: Pure Statement
-  declaration = do
-    (name :> (s, _)) <- try $ locate $ identifier <* reserved ":"
-    ty <- type'
-    e <- getPosition
-    return (Declaration name ty :> (s, e))
-
   type' :: Parser Declaration 
-  type' = (string "char" $> CharE) 
-       <|> (string "string" $> StrE) 
-       <|> (string "int" $> IntE) 
-       <|> (string "float" $> FloatE)
+  type' =  try (string "char" $> CharE) 
+       <|> try (string "str" $> StrE) 
+       <|> try (string "int" $> IntE) 
+       <|> try (string "float" $> FloatE)
        <|> arrow <|> generic <|> array <|> parens type'
 
   generic :: Parser Declaration 
@@ -89,8 +83,8 @@ module Core.Parser.Parser where
   
   arrow :: Parser Declaration 
   arrow = do
+    reserved "fun"
     args <- parens $ commaSep type'
-    reserved "->"
     Arrow args <$> type'
 
   -- Statement parsing --
@@ -98,7 +92,6 @@ module Core.Parser.Parser where
   statement :: Pure Statement
   statement = choice [
       assignment,
-      declaration,
       condition,
       return',
       stmtExpr,
@@ -131,9 +124,13 @@ module Core.Parser.Parser where
 
   assignment :: Pure Statement
   assignment = do
-    (lhs :> s) <- try $ locate identifier <* reserved ":="
+    s <- getPosition
+    reserved "let"
+    (lhs :> _) <- annoted
+    whiteSpace >> reserved "="
     rhs <- expression
-    return (Assignment lhs rhs :> s)
+    e <- getPosition
+    return (Assignment lhs rhs :> (s, e))
 
   block :: Pure Statement
   block = do
@@ -175,19 +172,26 @@ module Core.Parser.Parser where
 
   variable :: Pure Expression
   variable = do
+    (v :> s) <- locate identifier
+    return (Variable v :> s)
+
+  annoted :: Pure (Annoted String)
+  annoted = do
     s <- getPosition
     v <- identifier
+    ty <- optionMaybe $ reserved ":" *> type'
     s2 <- getPosition
-    return (Variable v :> (s, s2))
+    return ((v :@ ty) :> (s, s2))
 
   function :: Pure Expression
   function = do
     s <- getPosition
     reserved "fun"
-    args <- parens $ commaSep identifier
+    args <- parens $ commaSep annoted
+    let args' = map (\(a :> _) -> a) args
     body <- statement <?> "function body"
     s2 <- getPosition
-    return (Lambda args body :> (s, s2))
+    return (Lambda args' body :> (s, s2))
 
   makeUnaryOp :: Alternative f => f (a -> a) -> f (a -> a)
   makeUnaryOp s = foldr1 (.) <$> some s
@@ -196,7 +200,8 @@ module Core.Parser.Parser where
   table = [
       [Postfix . makeUnaryOp $ do
         args <- parens $ commaSep expression
-        return $ \x@(_ :> e) -> FunctionCall x args :> e],
+        e <- getPosition
+        return $ \x@(_ :> (s, _)) -> FunctionCall x args :> (s, e)],
       [Infix (do
         char '`'
         fun <- identifier
@@ -206,10 +211,10 @@ module Core.Parser.Parser where
         index <- Token.brackets lexer expression
         e <- getPosition
         return $ \x@(_ :> (p, _)) -> Index x index :> (p, e) ],
-      [Infix (reservedOp "*" >> return (\x@(_ :> p) y@(_ :> _) -> BinaryOp "*" x y :> p)) AssocLeft,
-       Infix (reservedOp "/" >> return (\x@(_ :> p) y@(_ :> _) -> BinaryOp "/" x y :> p)) AssocLeft],
-      [Infix (reservedOp "+" >> return (\x@(_ :> p) y@(_ :> _) -> BinaryOp "+" x y :> p)) AssocLeft,
-       Infix (reservedOp "-" >> return (\x@(_ :> p) y@(_ :> _) -> BinaryOp "-" x y :> p)) AssocLeft]
+      [Infix (reservedOp "*" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "*" x y :> (s, e))) AssocLeft,
+       Infix (reservedOp "/" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "/" x y :> (s, e))) AssocLeft],
+      [Infix (reservedOp "+" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "+" x y :> (s, e))) AssocLeft,
+       Infix (reservedOp "-" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "-" x y :> (s, e))) AssocLeft]
     ]
 
   parsePure :: String -> String -> Either ParseError [Located Statement]
