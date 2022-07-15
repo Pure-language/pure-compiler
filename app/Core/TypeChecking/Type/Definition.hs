@@ -1,5 +1,6 @@
 module Core.TypeChecking.Type.Definition where
   import Data.Map (Map)
+  import Data.List (intercalate)
   
   data Type
     = TVar Int
@@ -15,7 +16,8 @@ module Core.TypeChecking.Type.Definition where
 
   instance Show Type where
     show (TVar i) = "t" ++ show i
-    show (t :-> u) = "(" ++ show t ++ " -> " ++ show u ++ ")"
+    show (t :-> u) = "fun(" ++ intercalate ", " (map show t) ++ ") -> " ++ show u
+    show (ListT Char) = "String"
     show Int = "Int"
     show String = "String"
     show Float = "Float"
