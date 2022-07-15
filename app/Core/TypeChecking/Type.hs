@@ -5,14 +5,14 @@
 module Core.TypeChecking.Type where
   import Control.Monad.RWS
   import Control.Monad.Except
-  import Core.Parser.AST (Statement(..), Expression(..), Located(..), Literal(..), Declaration(..))
+  import Core.Parser.AST
   import Core.TypeChecking.Type.Definition
   import Core.TypeChecking.Type.Methods (compose)
   import qualified Data.Set as S
   import qualified Data.Map as M
   import Core.TypeChecking.Substitution (Types(free, apply), Substitution)
   import Data.Foldable (foldlM)
-  import Core.TypeChecking.Unification (mgu)
+  import Core.TypeChecking.Unification (mgu, check)
   import Text.Parsec (SourcePos)
   import Data.Either (isLeft)
   import Data.Maybe (isNothing)
@@ -39,13 +39,15 @@ module Core.TypeChecking.Type where
 
   {- TYPE DECLARATION PARSING -}
 
-  getGenerics :: Declaration -> Int -> (Int, M.Map String Int)
-  getGenerics (Generic a) i = (i + 1, M.singleton a i)
-  getGenerics (Arrow args t) i = (i', M.union m args')
-    where (_, m) = getGenerics t i'
-          (i', args') = foldl (\(i, m) a -> let (i', t) = getGenerics a i in (i', t `M.union` m)) (i, M.empty) args
-  getGenerics (Array t) i = getGenerics t i
-  getGenerics _ i = (i, M.empty)
+  getGenerics :: Declaration -> M.Map String Int -> Int -> (Int, M.Map String Int)
+  getGenerics (Generic a) m i = case M.lookup a m of
+    Just i' -> (i, m)
+    Nothing -> (i + 1, M.insert a i m)
+  getGenerics (Arrow args t) m i = (i', M.union m' args')
+    where (_, m') = getGenerics t m i'
+          (i', args') = foldl (\(i, m) a -> let (i', t) = getGenerics a m i in (i', t `M.union` m)) (i, m) args
+  getGenerics (Array t) m i = getGenerics t m i
+  getGenerics _ m i = (i, m)
 
   convert :: Declaration -> M.Map String Int -> Type
   convert (Generic a) m = case M.lookup a m of
@@ -58,9 +60,20 @@ module Core.TypeChecking.Type where
   convert StrE _ = ListT Char
   convert FloatE _ = Float
 
+  replace :: Declaration -> M.Map String Type -> Type
+  replace (Generic a) m = case M.lookup a m of
+    Just t -> t
+    Nothing -> error "Type variable not found"
+  replace (Arrow args t) m = map (`replace` m) args :-> replace t m
+  replace (Array t) m = ListT (replace t m)
+  replace IntE _ = Int
+  replace CharE _ = Char
+  replace StrE _ = ListT Char
+  replace FloatE _ = Float
+
   buildType :: Declaration -> Scheme
   buildType d = do
-    let (i, m) = getGenerics d 0
+    let (i, m) = getGenerics d M.empty 0
         ty     = convert d m
       in Forall (M.elems m) ty
 
@@ -68,21 +81,22 @@ module Core.TypeChecking.Type where
 
   -- Type checking a statement
   tyStatement :: MonadType m => Located Statement -> m (Maybe Type, Substitution, TypeEnv)
-  tyStatement (Declaration name ty :> pos) = do
-    env <- ask
-    return (Nothing, M.empty, M.insert name (buildType ty) env)
-  tyStatement z@((Assignment name value) :> pos) = do
+  tyStatement z@((Assignment (name :@ ty) value) :> pos) = do
     -- Fresh type for recursive definitions
     env <- ask
-    (tv, e) <- case M.lookup name env of
+    (tv, e) <- case ty of
       Just t -> do
-        t' <- tyInstantiate t
+        t' <- tyInstantiate $ buildType t
         return (t', M.singleton name (Forall [] t'))
       Nothing -> do
         tv <- fresh
         return (tv, M.singleton name (Forall [] tv))
     (t1, s1, e1) <- local (`M.union` e) $ tyExpression value
     
+    case mgu (apply s1 t1) (apply s1 tv) of
+      Left err -> throwError (err, Nothing, pos)
+      Right s -> return ()
+
     -- Typechecking variable type
     (s3, t2) <- case M.lookup name env of
       Just t' -> do
@@ -99,8 +113,10 @@ module Core.TypeChecking.Type where
     return (Nothing, s3, env'')
   tyStatement (Sequence stmts :> pos) = do
     (t1, s1, e1) <- foldlM (\(t, s, e) stmt -> do
-      (t', s', e') <- tyStatement stmt
-      return (t', s `compose` s', e `M.union` e')) (Nothing, M.empty, M.empty) stmts
+      (t', s', e') <- local (`M.union` e) $ tyStatement stmt
+      case check s s' of
+        Right s'' -> return (t', s'', e' `M.union` e)
+        Left err -> throwError (err, Nothing, pos)) (Nothing, M.empty, M.empty) stmts
     return (t1, s1, e1)
   tyStatement (If cond thenStmt elseStmt :> pos) = do
     (t1, s1, e1) <- tyExpression cond
@@ -169,10 +185,27 @@ module Core.TypeChecking.Type where
           Left x -> throwError (x, Just "Make sure you passed a list or a string", pos)
       Left x -> throwError (x, Nothing, pos)
   tyExpression (Lambda args body :> pos) = do
-    tvs <- mapM (const fresh) args
+    -- Reunion of all generics tables of explicit types
+    (genericsTable, _) <- foldlM (\(m, i) (name :@ ty) -> case ty of
+      Just t -> do
+        let (i, x) = getGenerics t m i 
+          in return (x `M.union` m, i)
+      Nothing -> return (m, i)) (M.empty, 0) args
+    -- Creating a fresh type foreach type of reunion
+    generic <- mapM (const fresh) genericsTable 
+
+    -- Recreating a map mapping generic name to type
+    let table = M.fromList (zip (M.keys genericsTable) (M.elems generic))
+
+    -- Creating a new argument type list based on map
+    tvs <- foldlM (\t (_ :@ ty) -> case ty of
+      Just t' -> return $ t ++ [replace t' table]
+      Nothing -> fresh >>= \t' -> return $ t ++ [t']) [] args
+      
     env <- ask
-    let env'  = foldl (flip M.delete) env args
-        env'' = env' `M.union` M.fromList [(x, Forall [] tv) | (x, tv) <- zip args tvs]
+    let args' = map (\(x :@ _) -> x) args
+    let env'  = foldl (flip M.delete) env args' 
+        env'' = env' `M.union` M.fromList (zipWith (\x t -> (x, Forall [] t)) args' tvs)
     (t1, s1, _) <- local (const env'') $ tyStatement body
     case t1 of
       Just t -> do
