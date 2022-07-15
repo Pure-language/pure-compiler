@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 module Core.TypeChecking.Unification where
-  import Core.TypeChecking.Substitution (Substitution, Types (free))
+  import Core.TypeChecking.Substitution (Substitution, Types (free, apply))
   import Core.TypeChecking.Type.Definition (Type(..))
   import qualified Data.Map as M
   import Core.TypeChecking.Type.Methods (compose)
@@ -16,16 +16,16 @@ module Core.TypeChecking.Unification where
   check :: Substitution  -> Substitution  -> Either String Substitution 
   check s1 s2 = foldl compose M.empty <$> m
     where m = sequence $ ialignWith (\i -> \case
-                This a -> Right (M.singleton i a)
-                That b -> Right (M.singleton i b)
-                These a b -> mgu a b) s1 s2
+                This a -> Right (M.singleton i (apply s1 a))
+                That b -> Right (M.singleton i (apply s2 b))
+                These a b -> mgu (apply s1 a) (apply s2 b)) s1 s2
 
   mgu :: Type -> Type -> Either String Substitution
   mgu (TVar i) t = variable i t
   mgu t (TVar i) = variable i t
-  mgu (t1 :-> t2) (t3 :-> t4)
+  mgu a@(t1 :-> t2) b@(t3 :-> t4)
     = if length t1 /= length t3
-        then Left $ show t1 ++ " has " ++ show (length t1) ++ " arguments whereas " ++ show t3 ++ " has " ++ show (length t3) ++ " arguments"
+        then Left $ show a ++ " has " ++ show (length t1) ++ " arguments whereas " ++ show b ++ " has " ++ show (length t3) ++ " arguments"
         else let s1 = foldl (\acc (t, t') -> case mgu t t' of
                   Right s -> compose <$> (acc >>= check s) <*> acc
                   Left s -> Left s) (Right M.empty) $ zip t1 t3
