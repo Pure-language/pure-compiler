@@ -1,7 +1,10 @@
 module Core.Parser.AST.Literal where
   import Text.Parsec (SourcePos)
   data Located a = a :> (SourcePos, SourcePos)
-    deriving (Show, Eq)
+    deriving (Eq)
+
+  instance Show a => Show (Located a) where
+    show (a :> _) = show a
 
   data Literal
     = I (Located Integer)
