@@ -1,3 +1,10 @@
-main := fun(x) {
-  print(x[0])
+let main = fun(x, y) {
+  y + x
+  let z = 5
+  return fun() {
+    z + x
+  }
 }
+let x = main(6, 5)()
+
+print(x)
