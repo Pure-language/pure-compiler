@@ -1,3 +1,4 @@
+{-# LANGUAGE BlockArguments #-}
 module Core.Parser.Parser where
   import Text.Parsec
   import Text.Parsec.Expr
@@ -198,7 +199,7 @@ module Core.Parser.Parser where
 
   table :: [[Operator String () Identity (Located Expression)]]
   table = [
-      [Postfix . makeUnaryOp $ do
+      [Postfix $  foldr1 (.) . reverse <$> some do
         args <- parens $ commaSep expression
         e <- getPosition
         return $ \x@(_ :> (s, _)) -> FunctionCall x args :> (s, e)],
@@ -207,7 +208,7 @@ module Core.Parser.Parser where
         fun <- identifier
         char '`'
         return (\x@(_ :> (p, _)) y@(_ :> (_, e)) -> BinaryOp fun x y :> (p, e) )) AssocLeft],
-      [Postfix . makeUnaryOp $ do
+      [Postfix $ foldr1 (.) . reverse <$> some do
         index <- Token.brackets lexer expression
         e <- getPosition
         return $ \x@(_ :> (p, _)) -> Index x index :> (p, e) ],
