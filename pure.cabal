@@ -35,8 +35,15 @@ executable pure
             Core.TypeChecking.Type.Methods
         Core.TypeChecking.Substitution
         Core.TypeChecking.Unification
+
+        Core.Closure.Conversion
+            Core.Closure.Conversion.Free
+            Core.Closure.Conversion.Type
+        Core.Closure.Compiler
     -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
+    default-extensions:
+        ConstraintKinds 
+        FlexibleContexts 
     build-depends:    
         base ^>=4.14.3.0
       , parsec
