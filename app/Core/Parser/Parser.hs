@@ -241,6 +241,9 @@ module Core.Parser.Parser where
   makeUnaryOp :: Alternative f => f (a -> a) -> f (a -> a)
   makeUnaryOp s = foldr1 (.) . reverse <$> some s
 
+  loc :: Located a -> (SourcePos, SourcePos)
+  loc (a :> s) = s
+
   table :: [[Operator String () Identity (Located Expression)]]
   table = [
       [Infix (do
@@ -250,6 +253,12 @@ module Core.Parser.Parser where
         return (\x@(_ :> (p, _)) y@(_ :> (_, e)) -> BinaryOp fun x y :> (p, e) )) AssocLeft],
       [Postfix $ makeUnaryOp postfix],
       equalities,
+      [Postfix $ do
+        reserved "?"
+        thn <- expression
+        reserved ":"
+        els <- expression
+        return (\x@(_ :> (p, _)) -> Ternary x thn els :> (p, snd $ loc els))],
       [Infix (reservedOp "*" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "*" x y :> (s, e))) AssocLeft,
        Infix (reservedOp "/" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "/" x y :> (s, e))) AssocLeft],
       [Infix (reservedOp "+" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "+" x y :> (s, e))) AssocLeft,

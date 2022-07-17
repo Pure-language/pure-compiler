@@ -32,4 +32,5 @@ module Core.Parser.AST.Expression where
     | Index (Located Expression) (Located Expression)
     | Structure [(String, Located Expression)]
     | Object (Located Expression) String
+    | Ternary (Located Expression) (Located Expression) (Located Expression)
     deriving (Show, Eq)
