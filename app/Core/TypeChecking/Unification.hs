@@ -6,12 +6,21 @@ module Core.TypeChecking.Unification where
   import Core.TypeChecking.Type.Methods (compose)
   import Data.These (These(..))
   import Data.Semialign.Indexed (SemialignWithIndex(ialignWith))
+  import Data.Align (Semialign(alignWith))
+  import Data.List (delete, union)
+  import Control.Monad (foldM)
   
   variable :: Int -> Type -> Either String Substitution
   variable n t
     | t == TVar n = Right M.empty
     | n `elem` free t = Left $ "Occurs check failed: " ++ show t
     | otherwise = Right $ M.singleton n t
+
+  align :: (Eq b, Eq a) => [(a, b)] -> [(a, b)] -> [((a, b), (a, b))]
+  align ((x, y):xs) ys = case lookup x ys of
+    Nothing -> align xs ys
+    Just t -> ((x, y), (x, t)) : align xs (delete (x, t) ys)
+  align [] _ = []
 
   check :: Substitution  -> Substitution  -> Either String Substitution 
   check s1 s2 = foldl compose M.empty <$> m
@@ -35,4 +44,9 @@ module Core.TypeChecking.Unification where
   mgu String String = Right M.empty
   mgu Bool Bool = Right M.empty
   mgu Char Char = Right M.empty
+  mgu (TRec fs1) (TRec fs2) = 
+    let f = align fs1 fs2 `union` align fs2 fs1
+      in foldM (\s (x, y) -> do
+        s' <- mgu (snd x) (snd y)
+        return $ compose s s') M.empty f
   mgu s1 s2 = Left $ "Type " ++ show s1 ++ " mismatches with type " ++ show s2

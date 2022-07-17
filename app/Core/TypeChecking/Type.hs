@@ -1,5 +1,3 @@
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TupleSections #-}
 module Core.TypeChecking.Type where
@@ -16,7 +14,8 @@ module Core.TypeChecking.Type where
   import Text.Parsec (SourcePos)
   import Data.Either (isLeft)
   import Data.Maybe (isNothing)
-
+  import Control.Arrow (Arrow(second))
+  
   getPosition :: Located a -> (SourcePos, SourcePos)
   getPosition (_ :> pos) = pos
 
@@ -55,6 +54,7 @@ module Core.TypeChecking.Type where
     Nothing -> error "Type variable not found"
   convert (Arrow args t) m = map (`convert` m) args :-> convert t m
   convert (Array t) m = ListT (convert t m)
+  convert (StructE f) m = TRec (map (second (`convert` m)) f)
   convert IntE _ = Int
   convert CharE _ = Char
   convert StrE _ = ListT Char
@@ -66,6 +66,7 @@ module Core.TypeChecking.Type where
     Nothing -> error "Type variable not found"
   replace (Arrow args t) m = map (`replace` m) args :-> replace t m
   replace (Array t) m = ListT (replace t m)
+  replace (StructE f) m = TRec (map (second (`replace` m)) f)
   replace IntE _ = Int
   replace CharE _ = Char
   replace StrE _ = ListT Char
@@ -245,6 +246,21 @@ module Core.TypeChecking.Type where
       doesUnify t (x:xs) = case mgu t x of
         Right s -> compose s <$> doesUnify t xs
         Left err -> Left err
+  tyExpression (Structure fields :> pos) = do
+    (ts, s, e) <- unzip3 <$> mapM (\(n, e) -> do
+      (t, s, env) <- tyExpression e
+      return ((n, t), s, env)) fields
+    return (TRec ts, foldl compose M.empty s, M.unions e)
+  tyExpression (Object var property :> pos) = do
+    env <- ask
+    (t, s1, e) <- tyExpression var
+    tv <- fresh
+    let s2 = mgu t (TRec [(property, tv)])
+    let s3 = compose <$> s2 <*> pure s1
+    case s3 of
+      Right s -> do
+        return (apply s tv, s, apply s e)
+      Left x -> throwError (x, Nothing, pos)
   tyExpression x = error $ "No supported yet: " ++ show x
 
   tyLiteral :: MonadType m => Literal -> m Type
@@ -256,7 +272,17 @@ module Core.TypeChecking.Type where
   env :: TypeEnv
   env = M.fromList [
       ("print", Forall [0] $ [TVar 0] :-> Int),
-      ("+", Forall [0] $ [TVar 0, TVar 0] :-> TVar 0)
+      ("+", Forall [0] $ [TVar 0, TVar 0] :-> TVar 0),
+      ("-", Forall [0] $ [TVar 0, TVar 0] :-> TVar 0),
+      ("*", Forall [0] $ [TVar 0, TVar 0] :-> TVar 0),
+      ("/", Forall [0] $ [TVar 0, TVar 0] :-> TVar 0),
+
+      ("<", Forall [0] $ [TVar 0, TVar 0] :-> Bool),
+      (">", Forall [0] $ [TVar 0, TVar 0] :-> Bool),
+      ("<=", Forall [0] $ [TVar 0, TVar 0] :-> Bool),
+      (">=", Forall [0] $ [TVar 0, TVar 0] :-> Bool),
+      ("==", Forall [0] $ [TVar 0, TVar 0] :-> Bool),
+      ("!=", Forall [0] $ [TVar 0, TVar 0] :-> Bool)
     ]
 
   runCheck :: MonadIO m => [Located Statement] -> m (Either (String, Maybe String, (SourcePos, SourcePos)) ())
