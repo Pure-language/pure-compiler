@@ -261,6 +261,20 @@ module Core.TypeChecking.Type where
       Right s -> do
         return (apply s tv, s, apply s e)
       Left x -> throwError (x, Nothing, pos)
+  tyExpression (Ternary cond e1 e2 :> pos) = do
+    (t1, s1, env1) <- tyExpression cond
+    (t2, s2, env2) <- tyExpression e1
+    (t3, s3, env3) <- tyExpression e2
+    let s4 = s1 `compose` s2 `compose` s3
+    case mgu t2 t3 of
+      Right s -> do
+        let s5 = s `compose` s4
+        case mgu (apply s5 t1) Bool of
+          Right _ -> return (apply s5 t2, s5, apply s5 $ env1 `M.union` env2 `M.union` env3)
+          Left x -> throwError (
+            x, Just "Expression should return a boolean type",
+            getPosition cond)
+      Left x -> throwError (x, Nothing, pos)
   tyExpression x = error $ "No supported yet: " ++ show x
 
   tyLiteral :: MonadType m => Literal -> m Type
