@@ -6,7 +6,7 @@ module Core.TypeChecking.Type.Definition where
     = TVar Int
     | [Type] :-> Type
     | Int | String | Float | Bool | Char
-    | ListT Type
+    | ListT Type | TRec [(String, Type)]
     deriving (Eq, Ord)
 
   type TypeEnv = Map String Scheme
@@ -24,3 +24,4 @@ module Core.TypeChecking.Type.Definition where
     show Bool = "Bool"
     show Char = "Char"
     show (ListT t) = "[" ++ show t ++ "]"
+    show (TRec fs) = "struct {" ++ intercalate ", " (map (\(n, t) -> n ++ " : " ++ show t) fs) ++ "}"
