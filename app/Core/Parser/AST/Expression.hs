@@ -6,6 +6,7 @@ module Core.Parser.AST.Expression where
     = Generic String
     | Arrow [Declaration] Declaration
     | Array Declaration
+    | StructE [(String, Declaration)]
     | StrE | IntE | FloatE | CharE
     deriving (Show, Eq)
 
@@ -29,4 +30,6 @@ module Core.Parser.AST.Expression where
     | UnaryOp String (Located Expression)
     | List [Located Expression]
     | Index (Located Expression) (Located Expression)
+    | Structure [(String, Located Expression)]
+    | Object (Located Expression) String
     deriving (Show, Eq)

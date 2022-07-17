@@ -20,7 +20,7 @@ module Core.Parser.Parser where
               , Token.commentLine     = "//"
               , Token.identStart      = letter
               , Token.identLetter     = alphaNum
-              , Token.reservedNames   = ["let", "=", "fun", "if", "else", "return"]
+              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->"] }
 
   lexer :: GenTokenParser String u Identity
@@ -58,7 +58,7 @@ module Core.Parser.Parser where
   type Pure a = Parser (Located a)
 
   parser :: Pure Statement
-  parser = whiteSpace >> statement
+  parser = whiteSpace *> statement
 
   locate :: Parser a -> Pure a
   locate p = do
@@ -71,10 +71,30 @@ module Core.Parser.Parser where
 
   type' :: Parser Declaration 
   type' =  try (string "char" $> CharE) 
+       <|> struct
        <|> try (string "str" $> StrE) 
        <|> try (string "int" $> IntE) 
        <|> try (string "float" $> FloatE)
        <|> arrow <|> generic <|> array <|> parens type'
+
+  struct :: Parser Declaration
+  struct = do
+    reserved "struct" 
+    reservedOp "{"
+    fields <- commaSep (do
+      name <- identifier
+      reserved ":"
+      t <- type'
+      return (name, t))
+    whiteSpace *> reservedOp "}"
+    return $ StructE fields
+
+  field :: Parser (String, Declaration)
+  field = do
+    name <- identifier
+    reservedOp ":"
+    type' <- type'
+    return (name, type')
 
   generic :: Parser Declaration 
   generic = Generic <$> identifier
@@ -94,8 +114,8 @@ module Core.Parser.Parser where
   statement = choice [
       assignment,
       condition,
-      return',
       stmtExpr,
+      return',
       block
     ]
 
@@ -144,10 +164,34 @@ module Core.Parser.Parser where
   expression = buildExpressionParser table term
   
   term :: Pure Expression
-  term = number <|> stringLit <|> charLit <|> list
+  term = try float <|> number <|> stringLit <|> charLit <|> list
+      <|> (structure <?> "structure")
       <|> (function <?> "lambda")
       <|> (variable <?> "variable")
       <|> (parens expression <?> "expression")
+
+
+  structure :: Pure Expression
+  structure = do
+    s <- getPosition
+    reserved "struct" >> reservedOp "{"
+    fields <- commaSep (do
+      f <- identifier
+      reservedOp ":"
+      t <- expression
+      return (f, t))
+    reservedOp "}"
+    e <- getPosition
+    return (Structure fields :> (s, e))
+  
+  float :: Pure Expression
+  float = do
+    s <- getPosition
+    num <- many1 digit
+    char '.'
+    dec <- many1 digit
+    e <- getPosition
+    return $ Literal (F ((read (num ++ "." ++ dec) :: Float) :> (s, e))) :> (s, e)
 
   list :: Pure Expression
   list = do
@@ -195,28 +239,37 @@ module Core.Parser.Parser where
     return (Lambda args' body :> (s, s2))
 
   makeUnaryOp :: Alternative f => f (a -> a) -> f (a -> a)
-  makeUnaryOp s = foldr1 (.) <$> some s
+  makeUnaryOp s = foldr1 (.) . reverse <$> some s
 
   table :: [[Operator String () Identity (Located Expression)]]
   table = [
-      [Postfix $  foldr1 (.) . reverse <$> some do
-        args <- parens $ commaSep expression
-        e <- getPosition
-        return $ \x@(_ :> (s, _)) -> FunctionCall x args :> (s, e)],
       [Infix (do
         char '`'
         fun <- identifier
         char '`'
         return (\x@(_ :> (p, _)) y@(_ :> (_, e)) -> BinaryOp fun x y :> (p, e) )) AssocLeft],
-      [Postfix $ foldr1 (.) . reverse <$> some do
-        index <- Token.brackets lexer expression
-        e <- getPosition
-        return $ \x@(_ :> (p, _)) -> Index x index :> (p, e) ],
+      [Postfix $ makeUnaryOp postfix],
+      equalities,
       [Infix (reservedOp "*" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "*" x y :> (s, e))) AssocLeft,
        Infix (reservedOp "/" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "/" x y :> (s, e))) AssocLeft],
       [Infix (reservedOp "+" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "+" x y :> (s, e))) AssocLeft,
        Infix (reservedOp "-" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "-" x y :> (s, e))) AssocLeft]
     ]
-
+    where postfix = call <|> object <|> index
+          call = do
+            args <- parens $ commaSep expression
+            e <- getPosition
+            return $ \x@(_ :> (s, _)) -> FunctionCall x args :> (s, e)
+          object = do
+            reservedOp "."
+            object <- identifier
+            e <- getPosition
+            return $ \x@(_ :> (_, s)) -> Object x object :> (e, s)
+          index = do
+            index' <- Token.brackets lexer expression
+            e <- getPosition
+            return $ \x@(_ :> (p, _)) -> Index x index' :> (p, e)
+          equalityOp = ["==", "!=", "<", ">", "<=", ">="]
+          equalities = map (\op -> Infix (reservedOp op >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp op x y :> (s, e))) AssocLeft) equalityOp
   parsePure :: String -> String -> Either ParseError [Located Statement]
   parsePure = runParser (many parser <* eof) ()
