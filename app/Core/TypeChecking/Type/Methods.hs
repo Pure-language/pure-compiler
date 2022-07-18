@@ -4,7 +4,7 @@ module Core.TypeChecking.Type.Methods where
   import Core.TypeChecking.Type.Definition (Type(..), TypeEnv, Scheme (Forall))
   import qualified Data.Set as S
   import qualified Data.Map as M
-  import Data.Bifunctor (second)
+  import Data.Bifunctor (second, first)
   import Core.TypeChecking.Type.AST (TypedExpression(..), TypedStatement(..), Annoted(..))
   
   compose :: Substitution -> Substitution -> Substitution
@@ -18,6 +18,7 @@ module Core.TypeChecking.Type.Methods where
     free (ListT t) = free t
     free (TRec fs) = S.unions $ map (free . snd) fs
     free (RefT t) = free t
+    free (TApp n xs) = S.unions (map free xs)
     free _ = S.empty
 
     apply s (TVar i) = case M.lookup i s of
@@ -27,6 +28,7 @@ module Core.TypeChecking.Type.Methods where
     apply s (ListT t) = ListT $ apply s t
     apply s (TRec fs) = TRec $ map (second $ apply s) fs
     apply s (RefT t) = RefT (apply s t)
+    apply s (TApp n xs) = TApp n $ map (apply s) xs
     apply _ s = s
   
   instance Types a => Types [a] where
@@ -53,10 +55,15 @@ module Core.TypeChecking.Type.Methods where
     apply s (Sequence ss) = Sequence (apply s ss)
     apply s (Expression e) = Expression (apply s e)
     apply s (Return e) = Return (apply s e)
+    apply s (Enum n e) = Enum n (apply s e)
 
   instance Types (Annoted a) where
     free _ = undefined
     apply s (e :@ t) = e :@ apply s t
+
+  instance (Types a, Types b) => Types (a, b) where
+    free (a, b) = free a `S.union` free b
+    apply s (a, b) = (apply s a, apply s b)
 
   instance Types TypedExpression where
     free _ = undefined
@@ -73,3 +80,12 @@ module Core.TypeChecking.Type.Methods where
     apply s (Ternary c t e) = Ternary (apply s c) (apply s t) (apply s e)
     apply s (Reference e) = Reference (apply s e)
     apply s (Unreference e) = Unreference (apply s e)
+
+  applyEnv :: Types a => Substitution -> (a, b) -> (a, b)
+  applyEnv s = first (apply s)
+
+  applyCons :: Types b => Substitution -> (a, b) -> (a, b)
+  applyCons s = second (apply s)
+
+  union :: (Ord k1, Ord k2) => (M.Map k1 v1, M.Map k2 v2) -> (M.Map k1 v1, M.Map k2 v2) -> (M.Map k1 v1, M.Map k2 v2)
+  union (m1, m2) (m3, m4) = (M.union m1 m3, M.union m2 m4)

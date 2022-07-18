@@ -7,6 +7,7 @@ module Core.TypeChecking.Type.AST where
     | Sequence [TypedStatement]
     | Expression TypedExpression
     | Return TypedExpression
+    | Enum (String, [Type]) [Annoted String]
     deriving (Show, Eq)
 
   data Annoted a = a :@ Type

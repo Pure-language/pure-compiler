@@ -7,10 +7,12 @@ module Core.TypeChecking.Type.Definition where
     | [Type] :-> Type
     | Int | String | Float | Bool | Char
     | ListT Type | TRec [(String, Type)]
+    | TApp String [Type]
     | RefT Type
     deriving (Eq, Ord)
 
   type TypeEnv = Map String Scheme
+  type Env = (TypeEnv, TypeEnv)
 
   data Scheme = Forall [Int] Type
     deriving (Eq, Ord, Show)
@@ -27,3 +29,4 @@ module Core.TypeChecking.Type.Definition where
     show (ListT t) = "[" ++ show t ++ "]"
     show (TRec fs) = "struct {" ++ intercalate ", " (map (\(n, t) -> n ++ " : " ++ show t) fs) ++ "}"
     show (RefT t) = "ref " ++ show t
+    show (TApp s args) = s ++ "<" ++ intercalate ", " (map show args) ++ ">"
