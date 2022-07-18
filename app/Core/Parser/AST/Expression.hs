@@ -8,10 +8,12 @@ module Core.Parser.AST.Expression where
     | Array Declaration
     | StructE [(String, Declaration)]
     | StrE | IntE | FloatE | CharE
+    | Ref Declaration
     deriving (Show, Eq)
 
   data Statement
     = Assignment (Annoted String) (Located Expression)
+    | Modified (Located Expression) (Located Expression)
     | If (Located Expression) (Located Statement) (Located Statement)
     | Sequence [Located Statement]
     | Expression Expression
@@ -33,4 +35,6 @@ module Core.Parser.AST.Expression where
     | Structure [(String, Located Expression)]
     | Object (Located Expression) String
     | Ternary (Located Expression) (Located Expression) (Located Expression)
+    | Reference (Located Expression)
+    | Unreference (Located Expression)
     deriving (Show, Eq)

@@ -71,7 +71,7 @@ module Core.Parser.Parser where
 
   type' :: Parser Declaration 
   type' =  try (string "char" $> CharE) 
-       <|> struct
+       <|> struct <|> ref
        <|> try (string "str" $> StrE) 
        <|> try (string "int" $> IntE) 
        <|> try (string "float" $> FloatE)
@@ -108,10 +108,16 @@ module Core.Parser.Parser where
     args <- parens $ commaSep type'
     Arrow args <$> type'
 
+  ref :: Parser Declaration
+  ref = do
+    reserved "ref"
+    Ref <$> type'
+
   -- Statement parsing --
 
   statement :: Pure Statement
   statement = choice [
+      modification,
       assignment,
       condition,
       stmtExpr,
@@ -142,6 +148,14 @@ module Core.Parser.Parser where
   stmtExpr = do
     e :> s <- expression
     return (Expression e :> s)
+
+  modification :: Pure Statement
+  modification = do
+    s <- getPosition
+    name <- try $ expression <* reservedOp "="
+    e <- expression
+    s2 <- getPosition
+    return (Modified name e :> (s, s2))
 
   assignment :: Pure Statement
   assignment = do
@@ -228,6 +242,14 @@ module Core.Parser.Parser where
     s2 <- getPosition
     return ((v :@ ty) :> (s, s2))
 
+  annoted' :: Parser a -> Pure (Annoted a)
+  annoted' p = do
+    s <- getPosition
+    v <- p
+    ty <- optionMaybe $ reserved ":" *> type'
+    s2 <- getPosition
+    return ((v :@ ty) :> (s, s2))
+
   function :: Pure Expression
   function = do
     s <- getPosition
@@ -251,6 +273,7 @@ module Core.Parser.Parser where
         fun <- identifier
         char '`'
         return (\x@(_ :> (p, _)) y@(_ :> (_, e)) -> BinaryOp fun x y :> (p, e) )) AssocLeft],
+      [Prefix $ makeUnaryOp prefix],
       [Postfix $ makeUnaryOp postfix],
       equalities,
       [Postfix $ do
@@ -278,7 +301,20 @@ module Core.Parser.Parser where
             index' <- Token.brackets lexer expression
             e <- getPosition
             return $ \x@(_ :> (p, _)) -> Index x index' :> (p, e)
+
+          -- Equality operators
           equalityOp = ["==", "!=", "<", ">", "<=", ">="]
           equalities = map (\op -> Infix (reservedOp op >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp op x y :> (s, e))) AssocLeft) equalityOp
+
+          -- Prefix operators
+          prefix = ref <|> unref
+          ref = do
+            s <- getPosition
+            reserved "ref"
+            return $ \x@(_ :> (_, e)) -> Reference x :> (s, e)
+          unref = do
+            s <- getPosition
+            reservedOp "*"
+            return $ \x@(_ :> (_, e)) -> Unreference x :> (s, e)
   parsePure :: String -> String -> Either ParseError [Located Statement]
   parsePure = runParser (many parser <* eof) ()
