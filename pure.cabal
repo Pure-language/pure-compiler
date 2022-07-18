@@ -33,6 +33,7 @@ executable pure
         Core.TypeChecking.Type
             Core.TypeChecking.Type.Definition
             Core.TypeChecking.Type.Methods
+            Core.TypeChecking.Type.AST
         Core.TypeChecking.Substitution
         Core.TypeChecking.Unification
 
