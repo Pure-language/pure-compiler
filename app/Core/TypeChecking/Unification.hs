@@ -44,6 +44,7 @@ module Core.TypeChecking.Unification where
   mgu String String = Right M.empty
   mgu Bool Bool = Right M.empty
   mgu Char Char = Right M.empty
+  mgu (RefT t) (RefT t') = mgu t t'
   mgu (TRec fs1) (TRec fs2) = 
     let f = align fs1 fs2 `union` align fs2 fs1
       in foldM (\s (x, y) -> do

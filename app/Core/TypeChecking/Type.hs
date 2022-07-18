@@ -15,6 +15,9 @@ module Core.TypeChecking.Type where
   import Data.Either (isLeft)
   import Data.Maybe (isNothing)
   import Control.Arrow (Arrow(second))
+  import qualified Core.TypeChecking.Type.AST as A
+  import Data.List (unzip4)
+  import Debug.Trace (traceShow)
   
   getPosition :: Located a -> (SourcePos, SourcePos)
   getPosition (_ :> pos) = pos
@@ -44,8 +47,9 @@ module Core.TypeChecking.Type where
     Nothing -> (i + 1, M.insert a i m)
   getGenerics (Arrow args t) m i = (i', M.union m' args')
     where (_, m') = getGenerics t m i'
-          (i', args') = foldl (\(i, m) a -> let (i', t) = getGenerics a m i in (i', t `M.union` m)) (i, m) args
+          (i', args') = foldl (\(i, m) a -> let (i', t) = getGenerics a m i in (i', m `M.union` t)) (i, m) args
   getGenerics (Array t) m i = getGenerics t m i
+  getGenerics (Ref t) m i = getGenerics t m i
   getGenerics _ m i = (i, m)
 
   convert :: Declaration -> M.Map String Int -> Type
@@ -55,6 +59,7 @@ module Core.TypeChecking.Type where
   convert (Arrow args t) m = map (`convert` m) args :-> convert t m
   convert (Array t) m = ListT (convert t m)
   convert (StructE f) m = TRec (map (second (`convert` m)) f)
+  convert (Ref t) m = RefT (convert t m)
   convert IntE _ = Int
   convert CharE _ = Char
   convert StrE _ = ListT Char
@@ -71,6 +76,7 @@ module Core.TypeChecking.Type where
   replace CharE _ = Char
   replace StrE _ = ListT Char
   replace FloatE _ = Float
+  replace (Ref t) m = RefT (replace t m)
 
   buildType :: Declaration -> Scheme
   buildType d = do
@@ -81,7 +87,16 @@ module Core.TypeChecking.Type where
   {- TYPE CHECKING -}
 
   -- Type checking a statement
-  tyStatement :: MonadType m => Located Statement -> m (Maybe Type, Substitution, TypeEnv)
+  tyStatement :: MonadType m => Located Statement -> m (Maybe Type, Substitution, TypeEnv, A.TypedStatement)
+  tyStatement (Modified name value :> pos) = do
+    env <- ask
+    (t1, s1, env1, n1) <- tyExpression name
+    (t2, s2, env2, n2) <- tyExpression value
+    case mgu t1 (RefT t2) of
+      Right s -> do
+        let s3 = s `compose` s2 `compose` s1
+        return (Nothing, s3, apply s3 $ env1 `M.union` env2 `M.union` env, A.Modified n1 n2)
+      Left _ -> throwError ("Type error in assignment: ", Nothing, pos)
   tyStatement z@((Assignment (name :@ ty) value) :> pos) = do
     -- Fresh type for recursive definitions
     env <- ask
@@ -92,8 +107,8 @@ module Core.TypeChecking.Type where
       Nothing -> do
         tv <- fresh
         return (tv, M.singleton name (Forall [] tv))
-    (t1, s1, e1) <- local (`M.union` e) $ tyExpression value
-    
+    (t1, s1, e1, v1) <- local (`M.union` e) $ tyExpression value
+
     case mgu (apply s1 t1) (apply s1 tv) of
       Left err -> throwError (err, Nothing, pos)
       Right s -> return ()
@@ -111,24 +126,24 @@ module Core.TypeChecking.Type where
     let env'  = M.delete name env
         t'    = generalize (apply s3 env) (apply s3 t2)
         env'' = M.insert name t' env'
-    return (Nothing, s3, env'')
+    return (Nothing, s3, env'', A.Assignment (name A.:@ apply s3 t2) v1)
   tyStatement (Sequence stmts :> pos) = do
-    (t1, s1, e1) <- foldlM (\(t, s, e) stmt -> do
-      (t', s', e') <- local (`M.union` e) $ tyStatement stmt
+    (t1, s1, e1, v1) <- foldlM (\(t, s, e, v) stmt -> do
+      (t', s', e', v') <- local (e `M.union`) $ tyStatement stmt
       case check s s' of
-        Right s'' -> return (t', s'', e' `M.union` e)
-        Left err -> throwError (err, Nothing, pos)) (Nothing, M.empty, M.empty) stmts
-    return (t1, s1, e1)
+        Right s'' -> return (t', s'', e' `M.union` e, v ++ [v'])
+        Left err -> throwError (err, Nothing, pos)) (Nothing, M.empty, M.empty, []) stmts
+    return (t1, s1, e1, A.Sequence v1)
   tyStatement (If cond thenStmt elseStmt :> pos) = do
-    (t1, s1, e1) <- tyExpression cond
-    (t2, s2, e2) <- tyStatement thenStmt
-    (t3, s3, e3) <- tyStatement elseStmt
+    (t1, s1, e1, v1) <- tyExpression cond
+    (t2, s2, e2, v2) <- tyStatement thenStmt
+    (t3, s3, e3, v3) <- tyStatement elseStmt
     let s4 = s1 `compose` s2 `compose` s3
     case mgu <$> t2 <*> t3 of
       Just (Right s) -> do
         let s5 = s `compose` s4
         case mgu (apply s5 t1) Bool of
-          Right _ -> return (apply s5 t2, s5, apply s5 $ e1 `M.union` e2 `M.union` e3)
+          Right _ -> return (apply s5 t2, s5, apply s5 $ e1 `M.union` e2 `M.union` e3, A.If v1 v2 v3)
           Left x -> throwError (
             x, Just "Expression should return a boolean type",
             getPosition cond)
@@ -156,44 +171,44 @@ module Core.TypeChecking.Type where
           Just "Try to add statements in each branch", pos)
 
   tyStatement (Return expr :> pos) = do
-    (t1, s1, e1) <- tyExpression expr
-    return (Just t1, s1, e1)
+    (t1, s1, e1, v1) <- tyExpression expr
+    return (Just t1, s1, e1, A.Return v1)
 
   tyStatement (Expression expr :> pos) = do
-    (t1, s1, e1) <- tyExpression (expr :> pos)
-    return (Just t1, s1, e1)
+    (t1, s1, e1, v1) <- tyExpression (expr :> pos)
+    return (Just t1, s1, e1, A.Expression v1)
 
-  tyExpression :: MonadType m => Located Expression -> m (Type, Substitution, TypeEnv)
+  tyExpression :: MonadType m => Located Expression -> m (Type, Substitution, TypeEnv, A.TypedExpression )
   tyExpression (Variable name :> pos) = do
     env <- ask
     case M.lookup name env of
       Just t -> do
         t' <- tyInstantiate t
-        return (t', M.empty, M.empty)
+        return (t', M.empty, M.empty, A.Variable name)
       Nothing -> throwError (
         "Variable " ++ name ++ " is not defined",
         Just $ "Try to define a new variable " ++ name, pos)
   tyExpression (Index e i :> pos) = do
-    (t1, s1, e1) <- tyExpression e
-    (t2, s2, e2) <- tyExpression i
+    (t1, s1, e1, v1) <- tyExpression e
+    (t2, s2, e2, v2) <- tyExpression i
     case mgu (apply s1 t2) Int of
       Right s -> do
         let s3 = s `compose` s1 `compose` s2
         tv <- fresh
         case mgu (apply s3 t1) (ListT tv) of
           Right s4 -> do
-            return (apply s4 tv, s4 `compose` s3, e1 `M.union` e2)
+            return (apply s4 tv, s4 `compose` s3, e1 `M.union` e2, A.Index v1 v2)
           Left x -> throwError (x, Just "Make sure you passed a list or a string", pos)
       Left x -> throwError (x, Nothing, pos)
   tyExpression (Lambda args body :> pos) = do
     -- Reunion of all generics tables of explicit types
     (genericsTable, _) <- foldlM (\(m, i) (name :@ ty) -> case ty of
       Just t -> do
-        let (i, x) = getGenerics t m i 
+        let (i, x) = getGenerics t m i
           in return (x `M.union` m, i)
       Nothing -> return (m, i)) (M.empty, 0) args
     -- Creating a fresh type foreach type of reunion
-    generic <- mapM (const fresh) genericsTable 
+    generic <- mapM (const fresh) genericsTable
 
     -- Recreating a map mapping generic name to type
     let table = M.fromList (zip (M.keys genericsTable) (M.elems generic))
@@ -202,30 +217,30 @@ module Core.TypeChecking.Type where
     tvs <- foldlM (\t (_ :@ ty) -> case ty of
       Just t' -> return $ t ++ [replace t' table]
       Nothing -> fresh >>= \t' -> return $ t ++ [t']) [] args
-      
+
     env <- ask
     let args' = map (\(x :@ _) -> x) args
-    let env'  = foldl (flip M.delete) env args' 
+    let env'  = foldl (flip M.delete) env args'
         env'' = env' `M.union` M.fromList (zipWith (\x t -> (x, Forall [] t)) args' tvs)
-    (t1, s1, _) <- local (const env'') $ tyStatement body
+    (t1, s1, _, b) <- local (const env'') $ tyStatement body
     case t1 of
       Just t -> do
         let argTy = apply s1 tvs
-        return (argTy :-> t, s1, env)
+        return (argTy :-> t, s1, env, A.Lambda (zipWith (A.:@) args' argTy) b)
       Nothing -> throwError (
         "Lambda does not return anything",
         Just "Try to add expressions or statements in body", pos)
   tyExpression (z@(FunctionCall n xs) :> pos) = do
     tv <- fresh
-    (t1, s1, e1) <- tyExpression n
+    (t1, s1, e1, n1) <- tyExpression n
     e <- ask
-    (t2, s2, e2) <- foldlM (\(t, s, e) x -> do
-      (t', s', e') <- local (apply s) $ tyExpression x
-      return (t ++ [t'], s `compose` s', M.union e' e)) ([], s1, e) xs
+    (t2, s2, e2, args) <- foldlM (\(t, s, e, a) x -> do
+      (t', s', e', a') <- local (apply s) $ tyExpression x
+      return (t ++ [t'], s `compose` s', M.union e' e, a ++ [a'])) ([], s1, e, []) xs
     case mgu (t2 :-> tv) (apply s2 t1) of
-      Right s3 -> return (apply s3 tv, s3 `compose` s2 `compose` s1, apply s3 e)
+      Right s3 -> return (apply s3 tv, s3 `compose` s2 `compose` s1, apply s3 e, A.FunctionCall n1 args)
       Left x -> throwError (x, Nothing, pos)
-  tyExpression (Literal l :> _) = (,M.empty, M.empty) <$> tyLiteral l
+  tyExpression (Literal l :> _) = (,M.empty, M.empty, A.Literal $ compileLit l) <$> tyLiteral l
   tyExpression ((BinaryOp op e1 e2) :> pos) =
     tyExpression (FunctionCall (Variable op :> pos) [e1, e2] :> pos)
   tyExpression (List elems :> pos) = do
@@ -233,13 +248,13 @@ module Core.TypeChecking.Type where
     case ls of
       [] -> do
         t <- fresh
-        return (ListT t, M.empty, M.empty)
+        return (ListT t, M.empty, M.empty, A.List (map (\(_, _, _, e) -> e) ls))
       (x:xs) ->
-        let (x',_,_) = x
-            xs' = map (\(x, _, _) -> x) xs
+        let (x',_,_,_) = x
+            xs' = map (\(x, _, _,_) -> x) xs
           in case doesUnify x' xs' of
             Left err -> throwError (err, Just "All elements of a list should have same type", pos)
-            Right s -> return (ListT x', s, M.empty)
+            Right s -> return (ListT x', s, M.empty, A.List (map (\(_, _, _, e) -> e) ls))
     where
       doesUnify :: Type -> [Type] -> Either String Substitution
       doesUnify t [] = Right M.empty
@@ -247,33 +262,44 @@ module Core.TypeChecking.Type where
         Right s -> compose s <$> doesUnify t xs
         Left err -> Left err
   tyExpression (Structure fields :> pos) = do
-    (ts, s, e) <- unzip3 <$> mapM (\(n, e) -> do
-      (t, s, env) <- tyExpression e
-      return ((n, t), s, env)) fields
-    return (TRec ts, foldl compose M.empty s, M.unions e)
+    (ts, s, e, f) <- unzip4 <$> mapM (\(n, e) -> do
+      (t, s, env, f) <- tyExpression e
+      return ((n, t), s, env, (n, f))) fields
+    return (TRec ts, foldl compose M.empty s, M.unions e, A.Structure f)
   tyExpression (Object var property :> pos) = do
     env <- ask
-    (t, s1, e) <- tyExpression var
+    (t, s1, e, v1) <- tyExpression var
     tv <- fresh
     let s2 = mgu t (TRec [(property, tv)])
     let s3 = compose <$> s2 <*> pure s1
     case s3 of
       Right s -> do
-        return (apply s tv, s, apply s e)
+        return (apply s tv, s, apply s e, A.Object v1 property)
       Left x -> throwError (x, Nothing, pos)
   tyExpression (Ternary cond e1 e2 :> pos) = do
-    (t1, s1, env1) <- tyExpression cond
-    (t2, s2, env2) <- tyExpression e1
-    (t3, s3, env3) <- tyExpression e2
+    (t1, s1, env1, c) <- tyExpression cond
+    (t2, s2, env2, t) <- tyExpression e1
+    (t3, s3, env3, e) <- tyExpression e2
     let s4 = s1 `compose` s2 `compose` s3
     case mgu t2 t3 of
       Right s -> do
         let s5 = s `compose` s4
         case mgu (apply s5 t1) Bool of
-          Right _ -> return (apply s5 t2, s5, apply s5 $ env1 `M.union` env2 `M.union` env3)
+          Right _ -> return (apply s5 t2, s5, apply s5 $ env1 `M.union` env2 `M.union` env3, A.Ternary c t e)
           Left x -> throwError (
             x, Just "Expression should return a boolean type",
             getPosition cond)
+      Left x -> throwError (x, Nothing, pos)
+  tyExpression (Reference n :> pos) = do
+    (t, s, e, n1) <- tyExpression n
+    return (RefT t, s, e, A.Reference n1)
+  tyExpression (Unreference n :> pos) = do
+    ty <- fresh
+    (t, s, e, n1) <- tyExpression n
+    case mgu t (RefT ty) of
+      Right s' -> do
+        let s2 = s' `compose` s
+        return (apply s2 ty, s2, apply s2 e, A.Unreference n1)
       Left x -> throwError (x, Nothing, pos)
   tyExpression x = error $ "No supported yet: " ++ show x
 
@@ -282,6 +308,12 @@ module Core.TypeChecking.Type where
   tyLiteral (S _) = return $ ListT Char
   tyLiteral (F _) = return Float
   tyLiteral (C _) = return Char
+
+  compileLit :: Literal -> A.Literal
+  compileLit (I (x :> _)) = A.I x
+  compileLit (S (x :> _)) = A.S x
+  compileLit (F (x :> _)) = A.F x
+  compileLit (C (x :> _)) = A.C x
 
   env :: TypeEnv
   env = M.fromList [
@@ -299,14 +331,12 @@ module Core.TypeChecking.Type where
       ("!=", Forall [0] $ [TVar 0, TVar 0] :-> Bool)
     ]
 
-  runCheck :: MonadIO m => [Located Statement] -> m (Either (String, Maybe String, (SourcePos, SourcePos)) ())
-  runCheck stmt = do
-    (\case
-      Right _ -> Right ()
-      Left err -> Left err) <$> foldlM (\e x -> case e of
-      Right e -> do
+  runCheck :: MonadIO m => [Located Statement] -> m (Either (String, Maybe String, (SourcePos, SourcePos)) [A.TypedStatement])
+  runCheck stmt = 
+    (snd <$>) <$> foldlM (\e x -> case e of
+      Right (e, a) -> do
         x <- runExceptT $ runRWST (tyStatement x) e 0
         case x of
-          Right ((_, _, e), _, _) -> return (Right e)
+          Right ((_, _, e, a'), _, _) -> return (Right (e, a ++ [a']))
           Left err -> return (Left err)
-      Left err -> return (Left err)) (Right env) stmt
+      Left err -> return (Left err)) (Right (env, [])) stmt
