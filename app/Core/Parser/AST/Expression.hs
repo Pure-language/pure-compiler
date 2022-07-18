@@ -39,4 +39,5 @@ module Core.Parser.AST.Expression where
     | Ternary (Located Expression) (Located Expression) (Located Expression)
     | Reference (Located Expression)
     | Unreference (Located Expression)
+    | Match (Located Expression) [(Located Expression, Located Statement)]
     deriving (Show, Eq)

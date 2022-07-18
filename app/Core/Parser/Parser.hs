@@ -69,7 +69,6 @@ module Core.Parser.Parser where
 
   -- Type parsing --
 
-
   type' :: Parser Declaration 
   type' =  try (string "char" $> CharE) 
        <|> application <|> struct <|> ref
@@ -201,15 +200,34 @@ module Core.Parser.Parser where
     reserved "}"
     return (Sequence stmts :> s)
 
+  -- Expression parsing --
+
   expression :: Pure Expression
   expression = buildExpressionParser table term
   
   term :: Pure Expression
   term = try float <|> number <|> stringLit <|> charLit <|> list
+      <|> (match <?> "pattern matching")
       <|> (structure <?> "structure")
       <|> (function <?> "lambda")
       <|> (variable <?> "variable")
       <|> (parens expression <?> "expression")
+
+  match :: Pure Expression
+  match = do
+    s <- getPosition
+    reserved "match"
+    expr <- expression
+    cases <- Token.braces lexer $ commaSep case'
+    e <- getPosition
+    return $ Match expr cases :> (s, e)
+  
+  case' :: Parser (Located Expression, Located Statement)
+  case' = do
+    expr <- expression
+    reserved "->"
+    stmt <- statement
+    return (expr, stmt)
 
 
   structure :: Pure Expression
