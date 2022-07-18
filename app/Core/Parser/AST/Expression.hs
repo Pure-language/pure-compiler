@@ -7,6 +7,7 @@ module Core.Parser.AST.Expression where
     | Arrow [Declaration] Declaration
     | Array Declaration
     | StructE [(String, Declaration)]
+    | AppE String [Declaration]
     | StrE | IntE | FloatE | CharE
     | Ref Declaration
     deriving (Show, Eq)
@@ -18,6 +19,7 @@ module Core.Parser.AST.Expression where
     | Sequence [Located Statement]
     | Expression Expression
     | Return (Located Expression)
+    | Enum String [(String, Maybe [Declaration])]
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration

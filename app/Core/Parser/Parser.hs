@@ -69,13 +69,22 @@ module Core.Parser.Parser where
 
   -- Type parsing --
 
+
   type' :: Parser Declaration 
   type' =  try (string "char" $> CharE) 
-       <|> struct <|> ref
+       <|> application <|> struct <|> ref
        <|> try (string "str" $> StrE) 
        <|> try (string "int" $> IntE) 
        <|> try (string "float" $> FloatE)
-       <|> arrow <|> generic <|> array <|> parens type'
+       <|> arrow <|> generic <|> array
+       <|> parens type'
+
+  application :: Parser Declaration
+  application = do
+    f <- try $ identifier <* reservedOp "<"
+    args <- commaSep type'
+    reservedOp ">"
+    return $ AppE f args
 
   struct :: Parser Declaration
   struct = do
@@ -117,6 +126,7 @@ module Core.Parser.Parser where
 
   statement :: Pure Statement
   statement = choice [
+      enum,
       modification,
       assignment,
       condition,
@@ -124,6 +134,23 @@ module Core.Parser.Parser where
       return',
       block
     ]
+
+  enum :: Pure Statement
+  enum = do
+    s <- getPosition
+    reserved "enum"
+    name <- identifier
+    reservedOp "{"
+    values <- commaSep enumField
+    reservedOp "}"
+    e <- getPosition
+    return $ Enum name values :> (s, e)
+
+  enumField :: Parser (String, Maybe [Declaration])
+  enumField = do
+    name <- identifier
+    ty <- optionMaybe $ parens (commaSep type') 
+    return (name, ty)
 
   return' :: Pure Statement
   return' = do
