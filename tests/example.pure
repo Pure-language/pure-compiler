@@ -1,10 +1,9 @@
-let main = fun(x, y) {
-  y + x
-  let z = 5
-  return fun() {
-    z + x
-  }
+let modify: fun(ref a, a) a = fun(x, value) {
+  *x = value
+  return value
 }
-let x = main(6, 5)()
 
-print(x)
+/*let fibo = fun(n) 
+  n < 2 ? n : fibo(n - 1) + fibo(n - 2)
+
+print(fibo(5))*/
