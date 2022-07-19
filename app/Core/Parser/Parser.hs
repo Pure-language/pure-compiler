@@ -20,7 +20,7 @@ module Core.Parser.Parser where
               , Token.commentLine     = "//"
               , Token.identStart      = letter
               , Token.identLetter     = alphaNum
-              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return"]
+              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->"] }
 
   lexer :: GenTokenParser String u Identity
@@ -71,7 +71,7 @@ module Core.Parser.Parser where
 
   type' :: Parser Declaration 
   type' =  try (string "char" $> CharE) 
-       <|> application <|> struct <|> ref
+       <|> application <|> struct <|> ref <|> custom
        <|> try (string "str" $> StrE) 
        <|> try (string "int" $> IntE) 
        <|> try (string "float" $> FloatE)
@@ -103,6 +103,12 @@ module Core.Parser.Parser where
     reservedOp ":"
     type' <- type'
     return (name, type')
+
+  custom :: Parser Declaration
+  custom = do
+    reserved "extern"
+    name <- identifier
+    return (AppE name [])
 
   generic :: Parser Declaration 
   generic = Generic <$> identifier
