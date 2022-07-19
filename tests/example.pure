@@ -1,5 +1,6 @@
 let modify: fun(ref a, a) a = fun(x, value) {
-  *x = value
+  x = value
+  print(*x)
   return value
 }
 
