@@ -10,6 +10,13 @@ module Core.TypeChecking.Type.AST where
     | Enum (String, [Type]) [Annoted String]
     deriving (Show, Eq)
 
+  data TypedPattern
+    = VarP String Type
+    | LitP Literal
+    | WilP
+    | AppP String [TypedPattern]
+    deriving (Eq, Show)
+
   data Annoted a = a :@ Type
     deriving (Show, Eq)
 
@@ -27,6 +34,7 @@ module Core.TypeChecking.Type.AST where
     | Ternary TypedExpression TypedExpression TypedExpression
     | Reference TypedExpression
     | Unreference TypedExpression
+    | Match TypedExpression [(TypedPattern, TypedStatement)]
     deriving (Show, Eq)
 
   data Literal

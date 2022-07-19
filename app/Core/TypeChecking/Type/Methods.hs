@@ -5,7 +5,7 @@ module Core.TypeChecking.Type.Methods where
   import qualified Data.Set as S
   import qualified Data.Map as M
   import Data.Bifunctor (second, first)
-  import Core.TypeChecking.Type.AST (TypedExpression(..), TypedStatement(..), Annoted(..))
+  import Core.TypeChecking.Type.AST (TypedExpression(..), TypedStatement(..), Annoted(..), TypedPattern(..))
   
   compose :: Substitution -> Substitution -> Substitution
   compose s1 s2 = M.map (apply s1) s2 `M.union` s1
@@ -80,6 +80,12 @@ module Core.TypeChecking.Type.Methods where
     apply s (Ternary c t e) = Ternary (apply s c) (apply s t) (apply s e)
     apply s (Reference e) = Reference (apply s e)
     apply s (Unreference e) = Unreference (apply s e)
+
+  instance Types TypedPattern where
+    free _ = undefined
+    apply s (AppP n xs) = AppP n (apply s xs)
+    apply s (VarP v t) = VarP v (apply s t)
+    apply _ s = s
 
   applyEnv :: Types a => Substitution -> (a, b) -> (a, b)
   applyEnv s = first (apply s)

@@ -29,4 +29,4 @@ module Core.TypeChecking.Type.Definition where
     show (ListT t) = "[" ++ show t ++ "]"
     show (TRec fs) = "struct {" ++ intercalate ", " (map (\(n, t) -> n ++ " : " ++ show t) fs) ++ "}"
     show (RefT t) = "ref " ++ show t
-    show (TApp s args) = s ++ "<" ++ intercalate ", " (map show args) ++ ">"
+    show (TApp s args) = s ++ (if null args then "" else "<" ++ intercalate ", " (map show args) ++ ">")

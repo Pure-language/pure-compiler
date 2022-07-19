@@ -45,6 +45,11 @@ module Core.TypeChecking.Unification where
   mgu Bool Bool = Right M.empty
   mgu Char Char = Right M.empty
   mgu (RefT t) (RefT t') = mgu t t'
+  mgu a@(TApp n xs) b@(TApp n' xs') = if n == n' && length xs == length xs'
+    then foldl (\acc (t, t') -> case mgu t t' of
+                  Right s -> compose <$> (acc >>= check s) <*> acc
+                  Left s -> Left s) (Right M.empty) $ zip xs xs'
+    else Left $ "Type mismatch: " ++ show a ++ " and " ++ show b
   mgu (TRec fs1) (TRec fs2) = 
     let f = align fs1 fs2 `union` align fs2 fs1
       in foldM (\s (x, y) -> do
