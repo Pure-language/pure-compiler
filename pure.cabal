@@ -37,10 +37,13 @@ executable pure
         Core.TypeChecking.Substitution
         Core.TypeChecking.Unification
 
-        Core.Closure.Conversion
-            Core.Closure.Conversion.Free
-            Core.Closure.Conversion.Type
-        Core.Closure.Compiler
+        Core.Compiler.Modules
+            Core.Compiler.Modules.ADT
+            Core.Compiler.Modules.Pattern
+        Core.Compiler.Type
+            Core.Compiler.Type.Free
+            Core.Compiler.Type.Monad
+        Core.Compiler.Compiler
     -- LANGUAGE extensions used by modules in this package.
     default-extensions:
         ConstraintKinds 
