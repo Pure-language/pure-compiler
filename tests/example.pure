@@ -3,6 +3,20 @@ let modify: fun(ref a, a) a = fun(x, value) {
   print(*x)
   return value
 }
+enum Maybe {
+  Nothing,
+  Just(a)
+}
+
+let updateMaybe = fun(x, maybe) {
+  match maybe {
+    Nothing -> return Nothing,
+    Just(value) -> {
+      x = value
+      return Just(value)
+    }
+  }
+}
 
 /*let fibo = fun(n) 
   n < 2 ? n : fibo(n - 1) + fibo(n - 2)
