@@ -21,9 +21,10 @@ module Core.TypeChecking.Type.AST where
     deriving (Show, Eq)
 
   data TypedExpression
-    = FunctionCall TypedExpression [TypedExpression]
+    = FunctionCall TypedExpression [TypedExpression] [Type]
     | Lambda [Annoted String] TypedStatement    
     | Variable String
+    | Constructor String
     | Literal Literal
     | BinaryOp String TypedExpression TypedExpression
     | UnaryOp String TypedExpression

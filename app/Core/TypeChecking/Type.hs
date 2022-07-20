@@ -203,13 +203,17 @@ module Core.TypeChecking.Type where
   tyExpression :: MonadType m => Located Expression -> m (Type, Substitution, Env, A.TypedExpression)
   tyExpression (Variable name :> pos) = do
     (env, cons) <- ask
-    case M.lookup name (env `M.union` cons) of
+    case M.lookup name env of
       Just t -> do
         t' <- tyInstantiate t
         return (t', M.empty, (M.empty, M.empty), A.Variable name)
-      Nothing -> throwError (
-        "Variable " ++ name ++ " is not defined",
-        Just $ "Try to define a new variable " ++ name, pos)
+      Nothing -> case M.lookup name cons of
+        Just t -> do
+          t' <- tyInstantiate t
+          return (t', M.empty, (M.empty, M.empty), A.Constructor name)
+        Nothing -> throwError (
+          "Variable " ++ name ++ " is not defined",
+          Just "Check for declarations and check types", pos)
   tyExpression (Index e i :> pos) = do
     (t1, s1, e1, v1) <- tyExpression e
     (t2, s2, e2, v2) <- tyExpression i
@@ -259,7 +263,7 @@ module Core.TypeChecking.Type where
       (t', s', e', a') <- local (apply s) $ tyExpression x
       return (t ++ [t'], s `compose` s', e' `union` e, a ++ [a'])) ([], s1, e, []) xs
     case mgu (t2 :-> tv) (apply s2 t1) of
-      Right s3 -> return (apply s3 tv, s3 `compose` s2 `compose` s1, bimap (apply s3) (apply s3) e, A.FunctionCall n1 args)
+      Right s3 -> return (apply s3 tv, s3 `compose` s2 `compose` s1, bimap (apply s3) (apply s3) e, A.FunctionCall n1 args (apply s3 t2))
       Left x -> throwError (x, Nothing, pos)
   tyExpression (Literal l :> _) = do
     env <- ask
