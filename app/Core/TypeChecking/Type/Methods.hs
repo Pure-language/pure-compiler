@@ -67,7 +67,7 @@ module Core.TypeChecking.Type.Methods where
 
   instance Types TypedExpression where
     free _ = undefined
-    apply s (FunctionCall n xs) = FunctionCall (apply s n) (apply s xs) 
+    apply s (FunctionCall n xs t) = FunctionCall (apply s n) (apply s xs) (apply s t)
     apply s (Lambda args b) = Lambda (apply s args) (apply s b)
     apply _ (Variable s) = Variable s
     apply _ (Literal l) = Literal l
@@ -80,6 +80,8 @@ module Core.TypeChecking.Type.Methods where
     apply s (Ternary c t e) = Ternary (apply s c) (apply s t) (apply s e)
     apply s (Reference e) = Reference (apply s e)
     apply s (Unreference e) = Unreference (apply s e)
+    apply s (Match e ps) = Match (apply s e) (apply s ps)
+    apply _ (Constructor n) = Constructor n
 
   instance Types TypedPattern where
     free _ = undefined
