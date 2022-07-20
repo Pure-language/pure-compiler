@@ -20,7 +20,7 @@ module Main where
       Right ast -> do
         ast' <- runCheck ast
         case ast' of
-          Right _ -> return ()
+          Right ast -> print ast
           Left (error, msg, (p1, p2)) -> do
             let p1' = (sourceLine p1, sourceColumn p1)
             let p2' = (sourceLine p2, sourceColumn p2)
