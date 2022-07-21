@@ -43,6 +43,9 @@ executable pure
         Core.Compiler.Type
             Core.Compiler.Type.Free
             Core.Compiler.Type.Monad
+        Core.Compiler.CodeGen
+            Core.Compiler.CodeGen.Generation
+            Core.Compiler.CodeGen.IR
         Core.Compiler.Compiler
     -- LANGUAGE extensions used by modules in this package.
     default-extensions:
