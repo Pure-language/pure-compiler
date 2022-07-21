@@ -198,7 +198,7 @@ module Core.TypeChecking.Type where
           Nothing -> name A.:@ header) values
     env <- ask
     let cons = M.fromList $ map (\(x A.:@ ty) -> (x, generalize env ty)) tvs
-    return (Nothing, M.empty, second (M.union cons) env, A.Enum (name, M.elems table) tvs)
+    return (Nothing, M.empty, second (M.union cons) env, A.Enum (name, TApp name (M.elems table)) tvs)
 
   tyExpression :: MonadType m => Located Expression -> m (Type, Substitution, Env, A.TypedExpression)
   tyExpression (Variable name :> pos) = do
