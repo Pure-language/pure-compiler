@@ -1,11 +1,11 @@
 module Core.Compiler.Type.Monad where
-  import Control.Monad.RWS (MonadState (get, put), modify)
-  import Data.Map (Map, insert, delete)
+  import Control.Monad.RWS (MonadState (get, put), modify, gets)
+  import Data.Map (Map, insert, delete, empty)
   import Core.TypeChecking.Type.Definition (Type)
   import Core.Compiler.CodeGen (CppAST)
-  
+
   -- Mapping constructor name to enum type
-  type Environment = Map String String
+  type Environment = Map String (String, Bool)
 
   -- Mapping function to generic arguments
   type GenericMap = Map String [Type]
@@ -18,10 +18,22 @@ module Core.Compiler.Type.Monad where
     counter :: Int
   } deriving Show
 
+  emptyState :: CompilerState
+  emptyState = CompilerState {
+    environment = empty,
+    genericMap = empty,
+    toplevel = [],
+    structures = [],
+    counter = 0
+  }
+
   type MonadCompiler m = MonadState CompilerState m
 
-  addEnv :: MonadCompiler m => String -> String -> m ()
-  addEnv name enum = modify  $ \s -> s { environment = insert name enum (environment s) }
+  addEnv :: MonadCompiler m => String -> Bool -> String -> m ()
+  addEnv name b enum = modify  $ \s -> s { environment = insert name (enum, b) (environment s) }
+
+  getEnv :: MonadCompiler m => m Environment
+  getEnv = gets environment
 
   addGeneric :: MonadCompiler m => String -> [Type] -> m ()
   addGeneric name args = modify $ \s -> s { genericMap = insert name args (genericMap s) }
