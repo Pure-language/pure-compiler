@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 module Core.TypeChecking.Type.Methods where
   import Core.TypeChecking.Substitution (Types(..), Substitution)
-  import Core.TypeChecking.Type.Definition (Type(..), TypeEnv, Scheme (Forall))
+  import Core.TypeChecking.Type.Definition (Type(..), TypeEnv, Scheme (Forall), Env)
   import qualified Data.Set as S
   import qualified Data.Map as M
   import Data.Bifunctor (second, first)
@@ -94,6 +94,9 @@ module Core.TypeChecking.Type.Methods where
 
   applyCons :: Types b => Substitution -> (a, b) -> (a, b)
   applyCons s = second (apply s)
+
+  applyTypes :: (TypeEnv -> TypeEnv) -> Env -> Env
+  applyTypes f (ty, cons) = (f ty, cons)
 
   union :: (Ord k1, Ord k2) => (M.Map k1 v1, M.Map k2 v2) -> (M.Map k1 v1, M.Map k2 v2) -> (M.Map k1 v1, M.Map k2 v2)
   union (m1, m2) (m3, m4) = (M.union m1 m3, M.union m2 m4)
