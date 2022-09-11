@@ -12,6 +12,7 @@ module Core.Parser.Parser where
   import Control.Applicative (Alternative(some))
   import Core.Parser.AST
   import Debug.Trace (traceShow)
+  import Data.Maybe (fromMaybe)
   
   {- LEXER PART -}
   languageDef =
@@ -69,6 +70,9 @@ module Core.Parser.Parser where
 
   -- Type parsing --
 
+  generics :: Parser [String]
+  generics = reservedOp "<" *> commaSep identifier <* reservedOp ">"
+
   type' :: Parser Declaration 
   type' =  try (string "char" $> CharE) 
        <|> application <|> struct <|> ref <|> custom
@@ -111,7 +115,7 @@ module Core.Parser.Parser where
     return (AppE name [])
 
   generic :: Parser Declaration 
-  generic = Generic <$> identifier
+  generic = Id <$> identifier
 
   array :: Parser Declaration 
   array = Array <$> Token.brackets lexer type'
@@ -119,8 +123,9 @@ module Core.Parser.Parser where
   arrow :: Parser Declaration 
   arrow = do
     reserved "fun"
+    annot <- fromMaybe [] <$> optionMaybe generics
     args <- parens $ commaSep type'
-    Arrow args <$> type'
+    Arrow annot args <$> type'
 
   ref :: Parser Declaration
   ref = do
@@ -133,6 +138,7 @@ module Core.Parser.Parser where
   statement = choice [
       enum,
       modification,
+      functionStmt,
       assignment,
       condition,
       stmtExpr,
@@ -145,11 +151,12 @@ module Core.Parser.Parser where
     s <- getPosition
     reserved "enum"
     name <- identifier
+    gen <- fromMaybe [] <$> optionMaybe generics
     reservedOp "{"
     values <- commaSep enumField
     reservedOp "}"
     e <- getPosition
-    return $ Enum name values :> (s, e)
+    return $ Enum name gen values :> (s, e)
 
   enumField :: Parser (String, Maybe [Declaration])
   enumField = do
@@ -205,6 +212,19 @@ module Core.Parser.Parser where
     stmts <- many statement <?> "statement"
     reserved "}"
     return (Sequence stmts :> s)
+
+  functionStmt :: Pure Statement
+  functionStmt = do
+    s <- getPosition
+    reserved "fun"
+    name <- identifier
+    gen <- fromMaybe [] <$> optionMaybe generics
+    args <- parens $ commaSep annoted
+    let args' = map (\(a :> _) -> a) args
+    ret <- type'
+    body <- spaces *> block
+    e <- getPosition
+    return $ Assignment (name :@ Nothing) (Lambda gen args' body :> (s, e)) :> (s, e)
 
   -- Expression parsing --
 
@@ -305,11 +325,12 @@ module Core.Parser.Parser where
   function = do
     s <- getPosition
     reserved "fun"
+    annot <- fromMaybe [] <$> optionMaybe generics
     args <- parens $ commaSep annoted
     let args' = map (\(a :> _) -> a) args
     body <- statement <?> "function body"
     s2 <- getPosition
-    return (Lambda args' body :> (s, s2))
+    return (Lambda annot args' body :> (s, s2))
 
   makeUnaryOp :: Alternative f => f (a -> a) -> f (a -> a)
   makeUnaryOp s = foldr1 (.) . reverse <$> some s

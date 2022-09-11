@@ -3,8 +3,8 @@ module Core.Parser.AST.Expression where
   import Text.Parsec (SourcePos)
   
   data Declaration
-    = Generic String
-    | Arrow [Declaration] Declaration
+    = Id String
+    | Arrow [String] [Declaration] Declaration
     | Array Declaration
     | StructE [(String, Declaration)]
     | AppE String [Declaration]
@@ -19,7 +19,7 @@ module Core.Parser.AST.Expression where
     | Sequence [Located Statement]
     | Expression Expression
     | Return (Located Expression)
-    | Enum String [(String, Maybe [Declaration])]
+    | Enum String [String] [(String, Maybe [Declaration])]
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration
@@ -27,7 +27,7 @@ module Core.Parser.AST.Expression where
 
   data Expression
     = FunctionCall (Located Expression) [Located Expression]
-    | Lambda [Annoted String] (Located Statement)
+    | Lambda [String] [Annoted String] (Located Statement)
     | Variable String
     | Literal Literal
     | BinaryOp String (Located Expression) (Located Expression)
