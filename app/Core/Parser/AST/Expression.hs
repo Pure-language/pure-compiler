@@ -34,6 +34,7 @@ module Core.Parser.AST.Expression where
     | UnaryOp String (Located Expression)
     | List [Located Expression]
     | Index (Located Expression) (Located Expression)
+    | LetIn (Annoted String) (Located Expression) (Located Expression)
     | Structure [(String, Located Expression)]
     | Object (Located Expression) String
     | Ternary (Located Expression) (Located Expression) (Located Expression)

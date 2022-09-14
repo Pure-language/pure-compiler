@@ -21,7 +21,7 @@ module Core.Parser.Parser where
               , Token.commentLine     = "//"
               , Token.identStart      = letter
               , Token.identLetter     = alphaNum
-              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match"]
+              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->"] }
 
   lexer :: GenTokenParser String u Identity
@@ -138,10 +138,10 @@ module Core.Parser.Parser where
   statement = choice [
       enum,
       modification,
+      try stmtExpr,
       functionStmt,
       assignment,
       condition,
-      stmtExpr,
       return',
       block
     ]
@@ -233,11 +233,24 @@ module Core.Parser.Parser where
   
   term :: Pure Expression
   term = try float <|> number <|> stringLit <|> charLit <|> list
+      <|> (letIn <?> "let expression")
       <|> (match <?> "pattern matching")
       <|> (structure <?> "structure")
       <|> (function <?> "lambda")
       <|> (variable <?> "variable")
       <|> (parens expression <?> "expression")
+
+  letIn :: Pure Expression
+  letIn = do
+    s <- getPosition
+    reserved "let"
+    (lhs :> _) <- annoted 
+    reserved "="
+    rhs <- expression
+    reserved "in"
+    body <- expression
+    e <- getPosition
+    return $ LetIn lhs rhs body :> (s, e)
 
   match :: Pure Expression
   match = do
@@ -345,8 +358,8 @@ module Core.Parser.Parser where
         fun <- identifier
         char '`'
         return (\x@(_ :> (p, _)) y@(_ :> (_, e)) -> BinaryOp fun x y :> (p, e) )) AssocLeft],
-      [Prefix $ makeUnaryOp prefix],
       [Postfix $ makeUnaryOp postfix],
+      [Prefix $ makeUnaryOp prefix],
       equalities,
       [Postfix $ do
         reserved "?"
