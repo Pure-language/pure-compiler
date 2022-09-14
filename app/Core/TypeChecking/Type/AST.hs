@@ -8,39 +8,40 @@ module Core.TypeChecking.Type.AST where
     | Expression TypedExpression
     | Return TypedExpression
     | Enum (String, Type) [Annoted String]
-    deriving (Show, Eq)
+    deriving Eq
 
   data TypedPattern
     = VarP String Type
     | LitP Literal
     | WilP
     | AppP String [TypedPattern]
-    deriving (Eq, Show)
+    deriving Eq
 
   data Annoted a = a :@ Type
     deriving (Show, Eq)
 
   data TypedExpression
-    = FunctionCall TypedExpression [TypedExpression] [Type]
-    | Lambda [Annoted String] TypedStatement    
-    | Variable String
-    | Constructor String
+    = FunctionCall TypedExpression [TypedExpression] Type
+    | Lambda [Annoted String] TypedStatement Type    
+    | Variable String Type
+    | Constructor String Type
     | Literal Literal
     | BinaryOp String TypedExpression TypedExpression
     | UnaryOp String TypedExpression
     | List [TypedExpression]
     | Index TypedExpression TypedExpression
-    | Structure [(String, TypedExpression)]
+    | Structure [(String, TypedExpression)] Type
     | Object TypedExpression String
     | Ternary TypedExpression TypedExpression TypedExpression
+    | LetIn (Annoted String) TypedExpression TypedExpression Type
     | Reference TypedExpression
     | Unreference TypedExpression
     | Match TypedExpression [(TypedPattern, TypedStatement)]
-    deriving (Show, Eq)
+    deriving Eq
 
   data Literal
     = S String
     | I Integer
     | F Float 
     | C Char
-    deriving (Show, Eq)
+    deriving Eq

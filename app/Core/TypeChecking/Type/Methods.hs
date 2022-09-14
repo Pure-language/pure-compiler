@@ -5,7 +5,7 @@ module Core.TypeChecking.Type.Methods where
   import qualified Data.Set as S
   import qualified Data.Map as M
   import Data.Bifunctor (second, first)
-  import Core.TypeChecking.Type.AST (TypedExpression(..), TypedStatement(..), Annoted(..), TypedPattern(..))
+  import Core.TypeChecking.Type.AST
   
   compose :: Substitution -> Substitution -> Substitution
   compose s1 s2 = M.map (apply s1) s2 `M.union` s1
@@ -68,20 +68,21 @@ module Core.TypeChecking.Type.Methods where
   instance Types TypedExpression where
     free _ = undefined
     apply s (FunctionCall n xs t) = FunctionCall (apply s n) (apply s xs) (apply s t)
-    apply s (Lambda args b) = Lambda (apply s args) (apply s b)
-    apply _ (Variable s) = Variable s
+    apply s (Lambda args b t) = Lambda (apply s args) (apply s b) (apply s t)
+    apply s (Variable n t) = Variable n (apply s t)
     apply _ (Literal l) = Literal l
     apply s (BinaryOp op e1 e2) = BinaryOp op (apply s e1) (apply s e2)
     apply s (UnaryOp op e) = UnaryOp op (apply s e)
     apply s (List xs) = List (apply s xs)
     apply s (Index e i) = Index (apply s e) (apply s i)
-    apply s (Structure fs) = Structure (map (second $ apply s) fs)
+    apply s (Structure fs t) = Structure (map (second $ apply s) fs) (apply s t)
     apply s (Object e p) = Object (apply s e) p
     apply s (Ternary c t e) = Ternary (apply s c) (apply s t) (apply s e)
     apply s (Reference e) = Reference (apply s e)
     apply s (Unreference e) = Unreference (apply s e)
     apply s (Match e ps) = Match (apply s e) (apply s ps)
-    apply _ (Constructor n) = Constructor n
+    apply s (Constructor n t) = Constructor n (apply s t)
+    apply s (LetIn v e b t) = LetIn (apply s v) (apply s e) (apply s b) (apply s t)
 
   instance Types TypedPattern where
     free _ = undefined

@@ -17,7 +17,7 @@ module Core.TypeChecking.Type where
   import Control.Arrow (Arrow(second, first))
   import qualified Core.TypeChecking.Type.AST as A
   import Data.List (unzip4)
-  import Debug.Trace (traceShow)
+  import Debug.Trace (traceShow, traceShowM)
   import Data.Bifunctor (Bifunctor(bimap))
 
   getPosition :: Located a -> (SourcePos, SourcePos)
@@ -123,7 +123,7 @@ module Core.TypeChecking.Type where
     let env'  = M.delete name env
         t'    = generalize (applyEnv s3 (env, cons)) (apply s3 t2)
         env'' = M.insert name t' env'
-    return (Nothing, s3, (env'', cons), A.Assignment (name A.:@ apply s3 t2) v1)
+    return (Nothing, s3, (env'', cons), A.Assignment (name A.:@ apply s3 t2) (apply s3 v1))
   tyStatement (Sequence stmts :> pos) = do
     (t1, s1, e1, v1) <- foldlM (\(t, s, e, v) stmt -> do
       (t', s', e', v') <- local (e `union`) $ tyStatement stmt
@@ -188,16 +188,51 @@ module Core.TypeChecking.Type where
     return (Nothing, M.empty, second (M.union cons) env, A.Enum (name, TApp (TId name) (M.elems table)) tvs)
 
   tyExpression :: MonadType m => Located Expression -> m (Type, Substitution, Env, A.TypedExpression)
+  tyExpression (LetIn (name :@ ty) value body :> pos) = do
+    -- Fresh type for recursive definitions
+    e@(env, cons) <- ask
+    (tv, e) <- case ty of
+      Just t -> do
+        t' <- generalize e <$> createType t M.empty
+        t' <- tyInstantiate t'
+        return (t', M.singleton name (Forall [] t'))
+      Nothing -> do
+        tv <- fresh
+        return (tv, M.singleton name (Forall [] tv))
+    (t1, s1, e1, v1) <- local (first (`M.union` e)) $ tyExpression value
+
+    case mgu (apply s1 t1) (apply s1 tv) of
+      Left err -> throwError (err, Nothing, pos)
+      Right s -> return ()
+
+    -- Typechecking variable type
+    (s3, t2) <- case M.lookup name env of
+      Just t' -> do
+        t'' <- tyInstantiate t'
+        case mgu t1 t'' of
+          Right s -> do
+            let r = apply s t''
+            return (s `compose` s1, r)
+          Left x -> throwError (x, Just "Check for declarations and check types", pos)
+      Nothing -> return (s1, t1)
+    let env'  = M.delete name env
+        t'    = generalize (applyEnv s3 (env, cons)) (apply s3 t2)
+        env'' = M.insert name t' env'
+    
+    (t2, s2, e2, b') <- local (applyTypes . const $ apply s3 env'') $ tyExpression body
+    let s4 = compose s2 s3
+    return (t2, s4, apply s4 (env'', cons), A.LetIn (name A.:@ apply s4 t2) v1 b' t2)
+
   tyExpression (Variable name :> pos) = do
     (env, cons) <- ask
     case M.lookup name env of
       Just t -> do
         t' <- tyInstantiate t
-        return (t', M.empty, (M.empty, M.empty), A.Variable name)
+        return (t', M.empty, (M.empty, M.empty), A.Variable name t')
       Nothing -> case M.lookup name cons of
         Just t -> do
           t' <- tyInstantiate t
-          return (t', M.empty, (M.empty, M.empty), A.Constructor name)
+          return (t', M.empty, (M.empty, M.empty), A.Constructor name t')
         Nothing -> throwError (
           "Variable " ++ name ++ " is not defined",
           Just "Check for declarations and check types", pos)
@@ -232,7 +267,7 @@ module Core.TypeChecking.Type where
     case t1 of
       Just t -> do
         let argTy = apply s1 tvs
-        return (argTy :-> t, s1, (env, cons), A.Lambda (zipWith (A.:@) args' argTy) b)
+        return (apply s1 $ argTy :-> t, s1, (env, cons), A.Lambda (zipWith (A.:@) args' argTy) (apply s1 b) (apply s1 $ argTy :-> t))
       Nothing -> throwError (
         "Lambda does not return anything",
         Just "Try to add expressions or statements in body", pos)
@@ -244,13 +279,18 @@ module Core.TypeChecking.Type where
       (t', s', e', a') <- local (apply s) $ tyExpression x
       return (t ++ [t'], s `compose` s', e' `union` e, a ++ [a'])) ([], s1, e, []) xs
     case mgu (t2 :-> tv) (apply s2 t1) of
-      Right s3 -> return (apply s3 tv, s3 `compose` s2 `compose` s1, bimap (apply s3) (apply s3) e, A.FunctionCall n1 args (apply s3 t2))
+      Right s3 -> 
+        return (apply s3 tv, s3 `compose` s2 `compose` s1, bimap (apply s3) (apply s3) e, A.FunctionCall n1 args (apply s3 (t2 :-> tv)))
       Left x -> throwError (x, Nothing, pos)
   tyExpression (Literal l :> _) = do
     env <- ask
     (,M.empty, env, A.Literal $ compileLit l) <$> tyLiteral l
-  tyExpression ((BinaryOp op e1 e2) :> pos) =
-    tyExpression (FunctionCall (Variable op :> pos) [e1, e2] :> pos)
+  tyExpression ((BinaryOp op e1 e2) :> pos) = do
+    (t1, s1, e1, v1) <- tyExpression (FunctionCall (Variable op :> pos) [e1, e2] :> pos)
+    case v1 of
+      A.FunctionCall (A.Variable op t) [e1', e2'] ty -> do
+        return (t1, s1, e1, A.BinaryOp op e1' e2')
+      _ -> throwError ("Error that should not happen", Nothing, pos)
   tyExpression (List elems :> pos) = do
     ls <- mapM tyExpression elems
     env <- ask
@@ -274,7 +314,7 @@ module Core.TypeChecking.Type where
     (ts, s, e, f) <- unzip4 <$> mapM (\(n, e) -> do
       (t, s, env, f) <- tyExpression e
       return ((n, t), s, env, (n, f))) fields
-    return (TRec ts, foldl compose M.empty s, foldl union (M.empty, M.empty) e, A.Structure f)
+    return (TRec ts, foldl compose M.empty s, foldl union (M.empty, M.empty) e, A.Structure f (TRec ts))
   tyExpression (Object var property :> pos) = do
     env <- ask
     (t, s1, e, v1) <- tyExpression var
@@ -290,11 +330,11 @@ module Core.TypeChecking.Type where
     (t2, s2, env2, t) <- tyExpression e1
     (t3, s3, env3, e) <- tyExpression e2
     let s4 = s1 `compose` s2 `compose` s3
-    case mgu t2 t3 of
+    case mgu t3 t2 of
       Right s -> do
         let s5 = s `compose` s4
         case mgu (apply s5 t1) Bool of
-          Right _ -> return (apply s5 t2, s5, apply s5 $ env1 `union` env2 `union` env3, A.Ternary c t e)
+          Right _ -> return (apply s5 t2, s5, apply s5 $ env1 `union` env2 `union` env3, apply s5 $ A.Ternary c t e)
           Left x -> throwError (
             x, Just "Expression should return a boolean type",
             getPosition cond)
