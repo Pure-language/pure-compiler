@@ -32,21 +32,31 @@ executable pure
 
         Core.TypeChecking.Type
             Core.TypeChecking.Type.Definition
+            Core.TypeChecking.Type.Pretty
             Core.TypeChecking.Type.Methods
             Core.TypeChecking.Type.AST
         Core.TypeChecking.Substitution
         Core.TypeChecking.Unification
 
-       Core.Compiler.Modules
-           Core.Compiler.Modules.ADT
-           Core.Compiler.Modules.Pattern
-       Core.Compiler.Type
-           Core.Compiler.Type.Free
-           Core.Compiler.Type.Monad
-       Core.Compiler.CodeGen
-           Core.Compiler.CodeGen.Generation
-           Core.Compiler.CodeGen.IR
-       Core.Compiler.Compiler
+        Core.Conversion.Free
+        Core.Conversion.Close
+        Core.Conversion.Hoisting
+
+        Core.ANF
+        Core.Monomorphization
+        Core.Isolation
+
+        Core.Compiler.Modules.ADT
+        Core.Compiler.Modules.Pattern
+        Core.Compiler.Type
+            Core.Compiler.Type.Free
+            Core.Compiler.Type.Monad
+        Core.Compiler.CodeGen
+            Core.Compiler.CodeGen.Generation
+            Core.Compiler.CodeGen.IR
+        Core.Compiler.Compiler
+
+        Core.Utility.Color
     -- LANGUAGE extensions used by modules in this package.
     default-extensions:
         ConstraintKinds 
