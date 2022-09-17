@@ -13,11 +13,23 @@ module Core.Conversion.Hoisting where
     return $ "lambda" ++ show i
 
   hoistStmt :: MonadHoist m => TypedStatement -> m TypedStatement
+  hoistStmt (Assignment (n :@ t) (Lambda args body t')) = 
+    if n == "main"
+      then do
+        body' <- hoistStmt body
+        return $ Assignment (n :@ t) (Lambda args body' t')
+      else do
+        l <- freshLambda
+        body' <- hoistStmt body
+        tell [Assignment (l :@ t) (Lambda args body' t)]
+        return (Assignment (n :@ t) (Variable l t))
   hoistStmt (Assignment n e) = Assignment n <$> hoistExpr e
   hoistStmt (Return e) = Return <$> hoistExpr e
   hoistStmt (If e s1 s2) = If <$> hoistExpr e <*> hoistStmt s1 <*> hoistStmt s2
   hoistStmt (Sequence s) = Sequence <$> mapM hoistStmt s
   hoistStmt (Expression e) = Expression <$> hoistExpr e
+  hoistStmt (Match e cases) 
+    = Match <$> hoistExpr e <*> mapM (\(x, y) -> (x,) <$> hoistStmt y) cases
   hoistStmt (Modified n e) = Modified n <$> hoistExpr e
   hoistStmt x = return x
 
@@ -50,8 +62,6 @@ module Core.Conversion.Hoisting where
     = Reference <$> hoistExpr e
   hoistExpr (Unreference e) 
     = Unreference <$> hoistExpr e
-  hoistExpr (Match e cases) 
-    = Match <$> hoistExpr e <*> mapM (\(x, y) -> (x,) <$> hoistStmt y) cases
   hoistExpr x = return x
 
   runHoisting :: Monad m => [TypedStatement] -> m [TypedStatement]

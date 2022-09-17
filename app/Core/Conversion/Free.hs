@@ -26,8 +26,6 @@ module Core.Conversion.Free where
     free (Ternary a b c) = free a `S.union` free b `S.union` free c
     free (Reference e) = free e
     free (Unreference e) = free e
-    free (Match expr cases) 
-      = free expr `S.union` S.unions (map (\(x, y) -> free y S.\\ free x) cases)
     free _ = S.empty
 
   instance Free TypedPattern where
@@ -42,4 +40,6 @@ module Core.Conversion.Free where
     free (Sequence exprs) = free exprs
     free (Expression expr) = free expr
     free (Return expr) = free expr
+    free (Match expr cases) 
+      = free expr `S.union` S.unions (map (\(x, y) -> free y S.\\ free x) cases)
     free _ = S.empty
