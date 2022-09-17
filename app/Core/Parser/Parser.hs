@@ -59,7 +59,7 @@ module Core.Parser.Parser where
   type Pure a = Parser (Located a)
 
   parser :: Pure Statement
-  parser = whiteSpace *> statement
+  parser = whiteSpace *> topLevel
 
   locate :: Parser a -> Pure a
   locate p = do
@@ -79,6 +79,7 @@ module Core.Parser.Parser where
        <|> try (string "str" $> StrE) 
        <|> try (string "int" $> IntE) 
        <|> try (string "float" $> FloatE)
+       <|> try (string "void" $> VoidE)
        <|> arrow <|> generic <|> array
        <|> parens type'
 
@@ -134,9 +135,19 @@ module Core.Parser.Parser where
 
   -- Statement parsing --
 
+  topLevel :: Pure Statement
+  topLevel = choice [
+      extern,
+      enum,
+      functionStmt,
+      assignment
+    ]
+
   statement :: Pure Statement
   statement = choice [
+      extern,
       enum,
+      (match <?> "pattern matching"),
       modification,
       try stmtExpr,
       functionStmt,
@@ -145,6 +156,16 @@ module Core.Parser.Parser where
       return',
       block
     ]
+
+  extern :: Pure Statement
+  extern = do
+    s <- getPosition
+    reserved "extern"
+    name <- identifier
+    args <- parens $ commaSep type'
+    ret <- type'
+    e <- getPosition
+    return $ Extern name args ret :> (s, e)
 
   enum :: Pure Statement
   enum = do
@@ -221,10 +242,10 @@ module Core.Parser.Parser where
     gen <- fromMaybe [] <$> optionMaybe generics
     args <- parens $ commaSep annoted
     let args' = map (\(a :> _) -> a) args
-    ret <- type'
+    ret <- optionMaybe type'
     body <- spaces *> block
     e <- getPosition
-    return $ Assignment (name :@ Nothing) (Lambda gen args' body :> (s, e)) :> (s, e)
+    return $ Assignment (name :@ ret) (Lambda gen args' body :> (s, e)) :> (s, e)
 
   -- Expression parsing --
 
@@ -234,7 +255,6 @@ module Core.Parser.Parser where
   term :: Pure Expression
   term = try float <|> number <|> stringLit <|> charLit <|> list
       <|> (letIn <?> "let expression")
-      <|> (match <?> "pattern matching")
       <|> (structure <?> "structure")
       <|> (function <?> "lambda")
       <|> (variable <?> "variable")
@@ -252,7 +272,7 @@ module Core.Parser.Parser where
     e <- getPosition
     return $ LetIn lhs rhs body :> (s, e)
 
-  match :: Pure Expression
+  match :: Pure Statement
   match = do
     s <- getPosition
     reserved "match"
@@ -267,7 +287,6 @@ module Core.Parser.Parser where
     reserved "->"
     stmt <- statement
     return (expr, stmt)
-
 
   structure :: Pure Expression
   structure = do

@@ -8,7 +8,7 @@ module Core.Parser.AST.Expression where
     | Array Declaration
     | StructE [(String, Declaration)]
     | AppE String [Declaration]
-    | StrE | IntE | FloatE | CharE
+    | StrE | IntE | FloatE | CharE | VoidE
     | Ref Declaration
     deriving (Show, Eq)
 
@@ -20,6 +20,8 @@ module Core.Parser.AST.Expression where
     | Expression Expression
     | Return (Located Expression)
     | Enum String [String] [(String, Maybe [Declaration])]
+    | Extern String [Declaration] Declaration
+    | Match (Located Expression) [(Located Expression, Located Statement)]
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration
@@ -40,5 +42,4 @@ module Core.Parser.AST.Expression where
     | Ternary (Located Expression) (Located Expression) (Located Expression)
     | Reference (Located Expression)
     | Unreference (Located Expression)
-    | Match (Located Expression) [(Located Expression, Located Statement)]
     deriving (Show, Eq)
