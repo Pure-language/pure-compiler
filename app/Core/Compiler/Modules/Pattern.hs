@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 module Core.Compiler.Modules.Pattern where
   import Core.TypeChecking.Type.AST (TypedPattern(..), Literal(..))
   import Core.Compiler.CodeGen.IR (CppAST(..), isStatement)
@@ -5,38 +6,48 @@ module Core.Compiler.Modules.Pattern where
   import qualified Data.Map as M
   import Prelude hiding (and)
   import Data.Maybe (fromJust, isJust)
-  
+  import Control.Monad (zipWithM)
+
   and :: CppAST -> CppAST -> CppAST
   and l = CBinCall l "&&"
 
-  findPattern :: TypedPattern -> CppAST -> [(Maybe CppAST, Maybe CppAST)]
-  findPattern (LitP l) e    = [(Nothing, Just $ CBinCall e "==" (Lit l))]
-  findPattern WilP e        = [(Nothing, Nothing)]
-  findPattern (VarP v t) e  = [(Just $ CDeclaration (v, fromType t) e, Nothing)]
-  findPattern (AppP n xs) e = 
-    concat $ [(Nothing, Just $ CBinCall (CStructProp e "TYPE") "==" (CVariable n))] : zipWith (\x y -> findPattern y (CStructProp e x))
-    (["v" ++ show i | i <- [0..]]) xs
+  findPattern :: MonadCompiler m => TypedPattern -> m (CppAST -> [(Maybe CppAST, Maybe CppAST)])
+  findPattern (LitP l)    = return $ \e -> [(Nothing, Just $ CBinCall e "==" (Lit l))]
+  findPattern WilP        = return $ const [(Nothing, Nothing)]
+  findPattern (VarP v t)  = do
+    t <- fromType t
+    return $ \e -> [(Just $ CDeclaration (v, t) e, Nothing)]
+  findPattern (AppP n xs) = do
+    xs' <- zipWithM (\x y -> (x,) <$> findPattern y) (["v" ++ show i | i <- [0..]]) xs
+    return $ \e -> do
+      let xs'' = map (\(x, f) -> f (CStructProp e x)) xs'
+      concat ([(Nothing, Just $ CBinCall (CStructProp e "TYPE") "==" (CVariable $ n ++ "C"))] : xs'') 
 
-  compileCase :: MonadCompiler m => TypedPattern -> m (CppAST -> [CppAST] -> CppAST)
+  compileCase :: MonadCompiler m => TypedPattern -> CppAST -> [CppAST] -> m CppAST
   compileCase (VarP n t) = do
-    getEnv >>= \e -> case M.lookup n e of
-      Just _ -> return $ \x body ->
-        let cond = CBinCall (CStructProp x "TYPE") "==" (CVariable n)
-          in CIf cond $ CSequence body
-      Nothing -> return $ \x body -> CSequence [CDeclaration (n, fromType t) x, CSequence body]
+    \x b -> getEnv >>= \e -> case M.lookup n e of
+      Just _ -> return $
+        let cond = CBinCall (CStructProp x "TYPE") "==" (CVariable $ n ++ "C")
+          in CIf cond $ CSequence b
+      Nothing -> do
+        t <- fromType t
+        return $  CSequence [CDeclaration (n, t) x, CSequence b]
   compileCase (AppP n args) = do
-    return $ \x b -> do
-      let args' = concat $ zipWith (\arg v -> findPattern arg (CStructProp x v)) args (["v" ++ show i | i <- [0..]])
-      let lets   = map (fromJust . fst) $ filter (isJust . fst) args'
-      let cs = map (fromJust . snd) $ filter (isJust . snd) args'
-      let cond  = CBinCall (CStructProp x "TYPE") "==" (CVariable n)
+    let args' x = concat <$> zipWithM (\arg v -> do
+              f <- findPattern arg
+              return $ f (CStructProp x v)) args (["v" ++ show i | i <- [0..]])
+    \x b -> do
+      args_ <- args' x
+      let lets   = map (fromJust . fst) $ filter (isJust . fst) args_
+      let cs = map (fromJust . snd) $ filter (isJust . snd) args_
+      let cond  = CBinCall (CStructProp x "TYPE") "==" (CVariable $ n ++ "C")
           conds = case cs of
                     (c:cs) -> cond `and` foldl and c cs
                     _ -> cond
-        in CIf conds $ CSequence $ lets ++ b
+        in return $ CIf conds $ CSequence $ lets ++ b
   compileCase WilP = do
-    return $ \x b -> CSequence b
+    \x b -> return $ CSequence b
   compileCase (LitP l) = do
-    return $ \x b ->
+    \x b -> return $
       let cond = CBinCall x "===" (Lit l)
         in CIf cond $ CSequence b

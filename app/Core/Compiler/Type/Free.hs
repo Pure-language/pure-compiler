@@ -1,6 +1,7 @@
 module Core.Compiler.Type.Free where
   import Core.TypeChecking.Type.AST
   import Data.List (union, (\\))
+  import Core.Conversion.Free (unannotate)
   class Free a where
     free :: a -> [String]
   
@@ -11,26 +12,28 @@ module Core.Compiler.Type.Free where
     free (Sequence ss) = free ss
     free (Expression e)  = free e
     free (Return e) = free e
+    free (Match e cases) = free e `union` c
+      where c = concatMap (\(x,y) -> free y \\ free x) cases
     free (Enum _ _) = []
+    free _ = []
 
   instance Free TypedExpression where
     free (FunctionCall n xs _) = free n `union` free xs
-    free (Lambda args body) = free body \\ args'
+    free (Lambda args body t) = free body \\ args'
       where args' = map (\(x :@ _) -> x) args
-    free (Variable s) = [s]
+    free (Variable s t) = [s]
     free (Literal _) = []
     free (BinaryOp s x y) = free x `union` free y
     free (UnaryOp s x) = free x
     free (List xs) = free xs
     free (Index e i) = free e `union` free i
-    free (Structure fields) = free $ map snd fields
+    free (Structure fields _) = free $ map snd fields
     free (Object e _) = free e
     free (Ternary c t e) = free c `union` free t `union` free e
+    free (LetIn s e body t) = free e `union` (free body \\ [fst $ unannotate s])
     free (Reference c) = free c
     free (Unreference c) = free c
-    free (Match e cases) = free e `union` c
-      where c = concatMap (\(x,y) -> free y \\ free x) cases
-    free (Constructor _) =[]
+    free (Constructor _ t) =[]
 
   instance Free TypedPattern where
     free (VarP x _) = [x]

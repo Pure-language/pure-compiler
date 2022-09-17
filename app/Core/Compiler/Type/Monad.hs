@@ -14,7 +14,7 @@ module Core.Compiler.Type.Monad where
     environment :: Environment,
     genericMap :: GenericMap,
     toplevel :: [String],
-    structures :: [CppAST],
+    structures :: [(String, Type)],
     counter :: Int
   } deriving Show
 
@@ -47,8 +47,11 @@ module Core.Compiler.Type.Monad where
   addToplevel :: MonadCompiler m => String -> m ()
   addToplevel name = modify $ \s -> s { toplevel = name : toplevel s }
 
-  addStructure :: MonadCompiler m => CppAST -> m ()
-  addStructure ast = modify $ \s -> s { structures = ast : structures s }
+  addStructure :: MonadCompiler m => Type -> m String
+  addStructure t = do
+    name <- ("struct" ++) . show <$> gets counter
+    modify $ \s -> s { structures = (name, t) : structures s }
+    return name
 
   inc :: MonadCompiler m => m Int
   inc = do
