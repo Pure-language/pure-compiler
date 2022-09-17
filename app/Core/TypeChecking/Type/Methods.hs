@@ -14,7 +14,6 @@ module Core.TypeChecking.Type.Methods where
     free (TVar i) = S.singleton i 
     free (t1 :-> t2) = free t1 `S.union` free t2
     free Int = S.empty
-    free String = S.empty
     free (ListT t) = free t
     free (TRec fs) = S.unions $ map (free . snd) fs
     free (RefT t) = free t
@@ -56,6 +55,9 @@ module Core.TypeChecking.Type.Methods where
     apply s (Expression e) = Expression (apply s e)
     apply s (Return e) = Return (apply s e)
     apply s (Enum n e) = Enum n (apply s e)
+    apply s (Record n e) = Enum n (apply s e)
+    apply s (Extern n t r) = Extern n (apply s t) (apply s r)
+    apply s (Match e ps) = Match (apply s e) (apply s ps)
 
   instance Types (Annoted a) where
     free _ = undefined
@@ -79,9 +81,8 @@ module Core.TypeChecking.Type.Methods where
     apply s (Object e p) = Object (apply s e) p
     apply s (Ternary c t e) = Ternary (apply s c) (apply s t) (apply s e)
     apply s (Reference e) = Reference (apply s e)
-    apply s (Unreference e) = Unreference (apply s e)
-    apply s (Match e ps) = Match (apply s e) (apply s ps)
     apply s (Constructor n t) = Constructor n (apply s t)
+    apply s (Unreference e) = Unreference (apply s e)
     apply s (LetIn v e b t) = LetIn (apply s v) (apply s e) (apply s b) (apply s t)
 
   instance Types TypedPattern where
@@ -91,10 +92,10 @@ module Core.TypeChecking.Type.Methods where
     apply _ s = s
 
   applyEnv :: Types a => Substitution -> (a, b) -> (a, b)
-  applyEnv s = first (apply s)
+  applyEnv s (a, b) = (apply s a, b)
 
   applyCons :: Types b => Substitution -> (a, b) -> (a, b)
-  applyCons s = second (apply s)
+  applyCons s (a, b) = (a, apply s b)
 
   applyTypes :: (TypeEnv -> TypeEnv) -> Env -> Env
   applyTypes f (ty, cons) = (f ty, cons)

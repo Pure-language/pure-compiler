@@ -18,6 +18,12 @@ module Core.TypeChecking.Type.Pretty where
   showStmt (Enum (n, _) fields) 
     = bBlue "enum " ++ n ++ " { " ++ intercalate ", " (map (\(x :@ t) -> x ++ ": " ++ show t) fields) ++ "}"
   showStmt (Expression e) = show e
+  showStmt (Record (n, _) fields) 
+    = bBlue "struct " ++ n ++ " { " ++ intercalate ", " (map (\(x :@ t) -> x ++ ": " ++ show t) fields) ++ "}"
+  showStmt (Extern n t r)
+    = bBlue "extern " ++ n ++ "(" ++ intercalate ", " (map show t) ++ ") " ++ show r
+  showStmt (Match e cases)
+    = bBlue "match " ++ show e ++ " with " ++ intercalate " | " (map show cases)
 
   instance Show TypedStatement where
     show = showStmt
@@ -27,7 +33,7 @@ module Core.TypeChecking.Type.Pretty where
     = show n ++ "(" ++ intercalate ", " (map show args) ++ ")"
   showExpr (Lambda args body _)
     = "(\\" ++ unwords (map (\(x :@ _) -> x) args) ++ " -> " ++ show body ++ ")"
-  showExpr (Variable n _) = bold n
+  showExpr (Variable n t) = bold n
   showExpr (Constructor n _) = bold n
   showExpr (Literal l) = show l
   showExpr (BinaryOp op e1 e2) = show e1 ++ " " ++ op ++ " " ++ show e2
@@ -48,8 +54,6 @@ module Core.TypeChecking.Type.Pretty where
     = "&" ++ show e
   showExpr (Unreference e)
     = "*" ++ show e
-  showExpr (Match e cases)
-    = bBlue "match " ++ show e ++ " with " ++ intercalate " | " (map show cases)
 
   instance Show TypedExpression where
     show = showExpr

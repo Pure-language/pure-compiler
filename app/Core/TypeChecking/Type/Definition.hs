@@ -5,7 +5,7 @@ module Core.TypeChecking.Type.Definition where
   data Type
     = TVar Int
     | [Type] :-> Type
-    | Int | String | Float | Bool | Char
+    | Int | Float | Bool | Char | Void
     | ListT Type | TRec [(String, Type)]
     | TId String
     | TApp Type [Type]
@@ -23,7 +23,7 @@ module Core.TypeChecking.Type.Definition where
     show (t :-> u) = "fun(" ++ intercalate ", " (map show t) ++ ") -> " ++ show u
     show (ListT Char) = "String"
     show Int = "Int"
-    show String = "String"
+    show Void = "Void"
     show Float = "Float"
     show Bool = "Bool"
     show Char = "Char"

@@ -41,10 +41,10 @@ module Core.TypeChecking.Unification where
         in compose <$> s1 <*> mgu t2 t4
   mgu (ListT t) (ListT t') = mgu t t'
   mgu Int Int = Right M.empty
-  mgu String String = Right M.empty
   mgu Bool Bool = Right M.empty
   mgu Char Char = Right M.empty
   mgu (RefT t) (RefT t') = mgu t t'
+  mgu Void Void = Right M.empty
   mgu a@(TApp n xs) b@(TApp n' xs') = if n == n' && length xs == length xs'
     then foldl (\acc (t, t') -> case mgu t t' of
                   Right s -> compose <$> (acc >>= check s) <*> acc

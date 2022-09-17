@@ -14,11 +14,10 @@ module Core.TypeChecking.Type where
   import Text.Parsec (SourcePos)
   import Data.Either (isLeft)
   import Data.Maybe (isNothing)
-  import Control.Arrow (Arrow(second, first))
   import qualified Core.TypeChecking.Type.AST as A
   import Data.List (unzip4)
   import Debug.Trace (traceShow, traceShowM)
-  import Data.Bifunctor (Bifunctor(bimap))
+  import qualified Data.Bifunctor as B
 
   getPosition :: Located a -> (SourcePos, SourcePos)
   getPosition (_ :> pos) = pos
@@ -60,7 +59,8 @@ module Core.TypeChecking.Type where
     return $ TRec fields'
   createType (AppE name args) env 
     = TApp (TId name) <$> mapM (`createType` env) args
-  createType StrE _ = return String
+  createType StrE _ = return (ListT Char)
+  createType VoidE _ = return Void
   createType IntE _ = return Int
   createType FloatE _ = return Float
   createType CharE _ = return Char
@@ -72,11 +72,12 @@ module Core.TypeChecking.Type where
     Nothing -> TId a
   replace (Arrow annot args t) m = map (`replace` m) args :-> replace t m
   replace (Array t) m = ListT (replace t m)
-  replace (StructE f) m = TRec (map (second (`replace` m)) f)
+  replace (StructE f) m = TRec (map (B.second (`replace` m)) f)
   replace IntE _ = Int
   replace CharE _ = Char
   replace StrE _ = ListT Char
   replace FloatE _ = Float
+  replace VoidE _ = Void
   replace (AppE n xs) m = TApp (TId n) (map (`replace` m) xs)
   replace (Ref t) m = RefT (replace t m)
 
@@ -104,7 +105,7 @@ module Core.TypeChecking.Type where
       Nothing -> do
         tv <- fresh
         return (tv, M.singleton name (Forall [] tv))
-    (t1, s1, e1, v1) <- local (first (`M.union` e)) $ tyExpression value
+    (t1, s1, e1, v1) <- local (B.first (`M.union` e)) $ tyExpression value
 
     case mgu (apply s1 t1) (apply s1 tv) of
       Left err -> throwError (err, Nothing, pos)
@@ -185,7 +186,62 @@ module Core.TypeChecking.Type where
           Nothing -> name A.:@ header) values
     env <- ask
     let cons = M.fromList $ map (\(x A.:@ ty) -> (x, generalize env ty)) tvs
-    return (Nothing, M.empty, second (M.union cons) env, A.Enum (name, TApp (TId name) (M.elems table)) tvs)
+    return (Nothing, M.empty, B.second (M.union cons) env, A.Enum (name, TApp (TId name) (M.elems table)) tvs)
+  tyStatement (Extern n args ret :> pos) = do
+    env <- ask
+    args' <- mapM (`createType` M.empty) args
+    ret' <- createType ret M.empty
+    let t = args' :-> ret'
+    return (Nothing, M.empty, B.first (M.insert n (generalize env t)) env, A.Extern n args' ret')
+  tyStatement z@(Match expr cases :> pos) = do
+    (pat_t, s1, e, pat') <- tyExpression expr
+
+    (sub, res) <- foldM (\(s, acc) (pattern, expr) -> do
+      (p, s', t, m) <- tyPattern pattern
+      let s2 = s' `compose`  s
+      -- (Type, Substitution, Env, A.TypedExpression)
+      (t', s'', _, e) <- local (applyTypes $ apply s2 . (m `M.union`)) $ tyStatement expr
+      let s3 = s'' `compose` s2
+      case t' of
+        Nothing -> throwError ("Pattern does not return anything", Nothing, pos)
+        Just t' -> return (s3, acc ++ [(apply s3 t, apply s3 t', s3, (apply s3 p, apply s3 e))])) (s1, []) cases
+  
+    if null res 
+      then throwError ("No case matches in pattern matching", Nothing, pos)
+      else do
+        let (_, t, _, _) = head res
+        
+        let s = foldl (\acc (tp, te, s, _) ->
+                let r = compose <$> mgu t te <*> mgu tp pat_t
+                    r' = compose <$> r <*> acc
+                  in compose <$> r' <*> pure s) (Right sub) res
+        let s2 = foldl (\acc (tp, te, s, _) ->
+                let r = compose <$> mgu t te <*> mgu tp pat_t
+                    r' = compose <$> r <*> acc
+                  in compose <$> r' <*> pure s) (Right sub) $ reverse res
+        let s' = compose <$> s <*> s2
+        
+        -- Checking against patterns
+        let tys = map (\(x, _, _, _) -> case s of
+                    Right s -> apply s x
+                    Left _ -> x) res
+        
+        let s'' = foldl (\acc x -> compose <$> patUnify x tys <*> acc) (Right M.empty) tys
+
+        -- Checking against bodys
+        let bodys = map (\(_, x, _, _) -> case s of
+                    Right s -> apply s x
+                    Left _ -> x) res
+
+        let s''' = foldl (\acc x -> compose <$> patUnify x bodys <*> acc) (Right M.empty) bodys
+
+        case compose <$> (compose <$> s'' <*> s''') <*> s' of
+          Right s -> do
+            let patterns' = map (\(_, _, _, (x, y)) -> (apply s x, apply s y)) res
+
+            -- (Maybe Type, Substitution, Env, A.TypedStatement)
+            return (Just $ apply s t, s, (M.empty, M.empty), A.Match pat' patterns')
+          Left e -> throwError (e, Nothing, pos)
 
   tyExpression :: MonadType m => Located Expression -> m (Type, Substitution, Env, A.TypedExpression)
   tyExpression (LetIn (name :@ ty) value body :> pos) = do
@@ -199,7 +255,7 @@ module Core.TypeChecking.Type where
       Nothing -> do
         tv <- fresh
         return (tv, M.singleton name (Forall [] tv))
-    (t1, s1, e1, v1) <- local (first (`M.union` e)) $ tyExpression value
+    (t1, s1, e1, v1) <- local (B.first (`M.union` e)) $ tyExpression value
 
     case mgu (apply s1 t1) (apply s1 tv) of
       Left err -> throwError (err, Nothing, pos)
@@ -219,9 +275,9 @@ module Core.TypeChecking.Type where
         t'    = generalize (applyEnv s3 (env, cons)) (apply s3 t2)
         env'' = M.insert name t' env'
     
-    (t2, s2, e2, b') <- local (applyTypes . const $ apply s3 env'') $ tyExpression body
+    (t3, s2, e2, b') <- local (applyTypes . const $ apply s3 env'') $ tyExpression body
     let s4 = compose s2 s3
-    return (t2, s4, apply s4 (env'', cons), A.LetIn (name A.:@ apply s4 t2) v1 b' t2)
+    return (t2, s4, apply s4 (env'', cons), A.LetIn (name A.:@ apply s4 t2) v1 b' t3)
 
   tyExpression (Variable name :> pos) = do
     (env, cons) <- ask
@@ -280,7 +336,7 @@ module Core.TypeChecking.Type where
       return (t ++ [t'], s `compose` s', e' `union` e, a ++ [a'])) ([], s1, e, []) xs
     case mgu (t2 :-> tv) (apply s2 t1) of
       Right s3 -> 
-        return (apply s3 tv, s3 `compose` s2 `compose` s1, bimap (apply s3) (apply s3) e, A.FunctionCall n1 args (apply s3 (t2 :-> tv)))
+        return (apply s3 tv, s3 `compose` s2 `compose` s1, B.bimap (apply s3) (apply s3) e, A.FunctionCall n1 args (apply s3 (t2 :-> tv)))
       Left x -> throwError (x, Nothing, pos)
   tyExpression (Literal l :> _) = do
     env <- ask
@@ -350,53 +406,6 @@ module Core.TypeChecking.Type where
         let s2 = s' `compose` s
         return (apply s2 ty, s2, apply s2 e, A.Unreference n1)
       Left x -> throwError (x, Nothing, pos)
-  tyExpression z@(Match expr cases :> pos) = do
-    (pat_t, s1, e, pat') <- tyExpression expr
-
-    (sub, res) <- foldM (\(s, acc) (pattern, expr) -> do
-      (p, s', t, m) <- tyPattern pattern
-      let s2 = s' `compose`  s
-      -- (Type, Substitution, Env, A.TypedExpression)
-      (t', s'', _, e) <- local (applyTypes $ apply s2 . (m `M.union`)) $ tyStatement expr
-      let s3 = s'' `compose` s2
-      case t' of
-        Nothing -> throwError ("Pattern does not return anything", Nothing, pos)
-        Just t' -> return (s3, acc ++ [(apply s3 t, apply s3 t', s3, (apply s3 p, apply s3 e))])) (s1, []) cases
-  
-    if null res 
-      then throwError ("No case matches in pattern matching", Nothing, pos)
-      else do
-        let (_, t, _, _) = head res
-        
-        let s = foldl (\acc (tp, te, s, _) ->
-                let r = compose <$> mgu t te <*> mgu tp pat_t
-                    r' = compose <$> r <*> acc
-                  in compose <$> r' <*> pure s) (Right sub) res
-        let s2 = foldl (\acc (tp, te, s, _) ->
-                let r = compose <$> mgu t te <*> mgu tp pat_t
-                    r' = compose <$> r <*> acc
-                  in compose <$> r' <*> pure s) (Right sub) $ reverse res
-        let s' = compose <$> s <*> s2
-        
-        -- Checking against patterns
-        let tys = map (\(x, _, _, _) -> case s of
-                    Right s -> apply s x
-                    Left _ -> x) res
-        
-        let s'' = foldl (\acc x -> compose <$> patUnify x tys <*> acc) (Right M.empty) tys
-
-        -- Checking against bodys
-        let bodys = map (\(_, x, _, _) -> case s of
-                    Right s -> apply s x
-                    Left _ -> x) res
-
-        let s''' = foldl (\acc x -> compose <$> patUnify x bodys <*> acc) (Right M.empty) bodys
-
-        case compose <$> (compose <$> s'' <*> s''') <*> s' of
-          Right s -> do
-            let patterns' = map (\(_, _, _, (x, y)) -> (apply s x, apply s y)) res
-            return (apply s t, s, (M.empty, M.empty), A.Match pat' patterns')
-          Left e -> throwError (e, Nothing, pos)
   tyExpression x = error $ "No supported yet: " ++ show x
 
   patUnify :: Type -> [Type] -> Either String Substitution
@@ -419,7 +428,7 @@ module Core.TypeChecking.Type where
     tv <- fresh
     (n', s1, t1, m1) <- tyPattern e
     (x', s2, t2, m2) <- foldlM (\(x', s, t, m) x -> do
-      (x'', s', t', m') <- local (first (apply s)) $ tyPattern x
+      (x'', s', t', m') <- local (B.first (apply s)) $ tyPattern x
       return (x' ++ [x''], s `compose` s', t ++ [t'], m' `M.union` m)) ([], s1, [], M.empty) xs
     case mgu (t2 :-> tv) (apply s2 t1)  of
       Right s3 -> do
@@ -447,7 +456,6 @@ module Core.TypeChecking.Type where
 
   env :: TypeEnv
   env = M.fromList [
-      ("print", Forall [0] $ [TVar 0] :-> Int),
       ("+", Forall [0] $ [TVar 0, TVar 0] :-> TVar 0),
       ("-", Forall [0] $ [TVar 0, TVar 0] :-> TVar 0),
       ("*", Forall [0] $ [TVar 0, TVar 0] :-> TVar 0),

@@ -8,6 +8,9 @@ module Core.TypeChecking.Type.AST where
     | Expression TypedExpression
     | Return TypedExpression
     | Enum (String, Type) [Annoted String]
+    | Record (String, Type) [Annoted String]
+    | Extern String [Type] Type
+    | Match TypedExpression [(TypedPattern, TypedStatement)]
     deriving Eq
 
   data TypedPattern
@@ -36,7 +39,6 @@ module Core.TypeChecking.Type.AST where
     | LetIn (Annoted String) TypedExpression TypedExpression Type
     | Reference TypedExpression
     | Unreference TypedExpression
-    | Match TypedExpression [(TypedPattern, TypedStatement)]
     deriving Eq
 
   data Literal
