@@ -1,36 +1,42 @@
-{-# LANGUAGE LambdaCase #-}
+
 {-# LANGUAGE TupleSections #-}
 module Core.TypeChecking.Type where
   import Control.Monad.RWS
   import Control.Monad.Except
   import Core.Parser.AST
   import Core.TypeChecking.Type.Definition
-  import Core.TypeChecking.Type.Methods (compose, union, applyEnv, applyTypes)
+  import Core.TypeChecking.Type.Methods
   import qualified Data.Set as S
   import qualified Data.Map as M
   import Core.TypeChecking.Substitution (Types(free, apply), Substitution)
   import Data.Foldable (foldlM)
-  import Core.TypeChecking.Unification (mgu, check)
+  import Core.TypeChecking.Unification (mgu, check, constraintCheck)
   import Text.Parsec (SourcePos)
-  import Data.Either (isLeft)
+  import Data.Either (isLeft, fromRight, isRight)
   import Data.Maybe (isNothing)
   import qualified Core.TypeChecking.Type.AST as A
   import Data.List (unzip4)
   import Debug.Trace (traceShow, traceShowM)
   import qualified Data.Bifunctor as B
+  import Core.Conversion.Free (unannotate)
+  import qualified Data.List as L
+  import Core.TypeChecking.Type.Pretty ()
 
   getPosition :: Located a -> (SourcePos, SourcePos)
   getPosition (_ :> pos) = pos
 
-  type MonadType m = (MonadRWS Env () Int m, MonadIO m, MonadError (String, Maybe String, (SourcePos, SourcePos)) m)
+  type MonadType m = (MonadRWS Env () (Int, Instances) m, MonadIO m, MonadError (String, Maybe String, (SourcePos, SourcePos)) m)
 
   generalize :: Env -> Type -> Scheme
   generalize (env, cons) t = Forall (S.toList vars) t
-    where vars = free t S.\\ (free env `S.union` free cons)
+    where vars = free t S.\\ free env
+
+  freshInstance :: MonadType m => Instance -> m ()
+  freshInstance t = modify (B.second (t:))
 
   -- Creating a new fresh type variable
   fresh :: MonadType m => m Type
-  fresh = get >>= \n -> modify (+1) >> return (TVar n)
+  fresh = gets fst >>= \n -> modify (B.first (+1)) >> return (TVar n)
 
   -- Create a type instance based on a scheme
   tyInstantiate :: MonadType m => Scheme -> m Type
@@ -57,7 +63,7 @@ module Core.TypeChecking.Type where
   createType (StructE fields) env = do
     fields' <- mapM (\(name, t) -> (name,) <$> createType t env) fields
     return $ TRec fields'
-  createType (AppE name args) env 
+  createType (AppE name args) env
     = TApp (TId name) <$> mapM (`createType` env) args
   createType StrE _ = return (ListT Char)
   createType VoidE _ = return Void
@@ -83,8 +89,79 @@ module Core.TypeChecking.Type where
 
   {- TYPE CHECKING -}
 
+  instances :: MonadType m => m Instances
+  instances = gets snd
+
+  trimap :: (a -> b) -> (c -> d) -> (e -> f) -> (a, c, e) -> (b, d, f)
+  trimap f g h (a, c, e) = (f a, g c, h e)
+
+  find' :: MonadType m => (SourcePos, SourcePos) -> [Class] -> [([Class], (String, [Class]))] -> m ([A.TypedExpression], [(String, Type)], [Class])
+  find' a subCls env = trimap concat concat concat . unzip3 <$> mapM
+    (\x -> if containsTVar' (appify x)
+        then return (map (\z@(IsIn cls tys) ->
+          A.Variable (cls ++ createTypeInstName tys) (appify z)) subCls,
+          map (\z@(IsIn cls tys) ->
+            (cls ++ createTypeInstName tys, appify z)) subCls, [x])
+        else case map (B.first $ fromRight M.empty) $ filter (isRight . fst) $ map (\z@(cls', _) -> (constraintCheck cls' [x], z)) env of
+      -- If a superclass instance exists
+      [(s, ([z@(IsIn cls t2)], (name, subCls')))] -> do
+        (subVar, subTC, cls) <- find' a (apply s subCls') env
+        --liftIO $ print s
+        let var = A.Variable name (apply s (appify z))
+          in return ([if null subVar
+            then var
+            else A.FunctionCall var subVar (apply s (appify z))], subTC, cls)
+
+      xs -> if containsTVar' (appify x)
+        then return (map (\z@(IsIn cls tys) ->
+          A.Variable (cls ++ createTypeInstName tys) (appify z)) subCls,
+          map (\z@(IsIn cls tys) ->
+            (cls ++ createTypeInstName tys, appify z)) subCls, [x])
+        else
+          if null xs
+            then throwError ("No instance found for " ++ show x, Nothing, a)
+            else throwError ("Instances " ++ L.intercalate ", " (map (\(_, (x:xs, _)) -> show x) xs) ++ " overlaps for " ++ show x, Nothing, a)) subCls
+
+  getTVars :: Type -> [Type]
+  getTVars (TApp t xs) = getTVars t ++ concatMap getTVars xs
+  getTVars (TVar x) = [TVar x]
+  getTVars (t1 :-> t2) = concatMap getTVars t1 ++ getTVars t2
+  getTVars _ = []
+
+  containsTVar :: Int -> Type -> Bool
+  containsTVar x (TVar x') = x == x'
+  containsTVar i (TApp t1 t2) = containsTVar i t1 || any (containsTVar i) t2
+  containsTVar i (t1 :-> t2) = all (containsTVar i) t1 || containsTVar i t2
+  containsTVar i _ = False
+
+  appearsInTC :: Type -> Type -> [Class]
+  appearsInTC (TVar t) (ps :=> _) = filter (\(IsIn _ p) -> any (containsTVar t) p) ps
+  appearsInTC t (t1 :-> t2) = concatMap (appearsInTC t) t1 ++ appearsInTC t t2
+  appearsInTC _ _ = []
+
+  createInstName :: [Class] -> String
+  createInstName (IsIn name ty:ts) = name ++ createTypeInstName ty ++ createInstName ts
+  createInstName [] = ""
+
+  containsTVar' :: Type -> Bool
+  containsTVar' (TVar _) = True
+  containsTVar' (TApp t1 t2) = containsTVar' t1 || any containsTVar' t2
+  containsTVar' (t1 :-> t2) = all containsTVar' t1 || containsTVar' t2
+  containsTVar' _ = False
+
+  createTypeInstName :: [Type] -> String
+  createTypeInstName (t:ts) = case t of
+    TVar x -> show x ++ (if null ts then "" else "_") ++ createTypeInstName ts
+    TApp n ts -> createTypeInstName [n] ++ createTypeInstName ts
+    TId n -> n
+    _ -> show t ++ createTypeInstName ts
+  createTypeInstName _ = ""
+
+  appify :: Class -> Type
+  appify (IsIn c ty) = TApp (TId c) ty
+
   -- Type checking a statement
-  tyStatement :: MonadType m => Located Statement -> m (Maybe Type, Substitution, Env, A.TypedStatement)
+  tyStatement :: MonadType m => Located Statement -> m (Maybe Type, Substitution, Env, [A.TypedStatement])
   tyStatement (Modified name value :> pos) = do
     env <- ask
     (t1, s1, env1, n1) <- tyExpression name
@@ -92,7 +169,7 @@ module Core.TypeChecking.Type where
     case mgu t1 (RefT t2) of
       Right s -> do
         let s3 = s `compose` s2 `compose` s1
-        return (Nothing, s3, applyEnv  s3 $ env1 `union` env2 `union` env, A.Modified n1 n2)
+        return (Nothing, s3, applyEnv  s3 $ env1 `union` env2 `union` env, [A.Modified n1 n2])
       Left err -> throwError (err, Nothing, pos)
   tyStatement z@((Assignment (name :@ ty) value) :> pos) = do
     -- Fresh type for recursive definitions
@@ -105,8 +182,11 @@ module Core.TypeChecking.Type where
       Nothing -> do
         tv <- fresh
         return (tv, M.singleton name (Forall [] tv))
-    (t1, s1, e1, v1) <- local (B.first (`M.union` e)) $ tyExpression value
-
+    (t1', s1, e1, v1) <- local (B.first (`M.union` e)) $ tyExpression value
+    (v'', args, preds) <- resolveInstances (v1 :> pos)
+    let t1 = case t1' of
+          _ :=> ty -> if null preds then ty else L.nub preds :=> ty
+          _ -> if null preds then t1' else L.nub preds :=> t1'
     case mgu (apply s1 t1) (apply s1 tv) of
       Left err -> throwError (err, Nothing, pos)
       Right s -> return ()
@@ -121,17 +201,23 @@ module Core.TypeChecking.Type where
             return (s `compose` s1, r)
           Left x -> throwError (x, Just "Check for declarations and check types", pos)
       Nothing -> return (s1, t1)
+
     let env'  = M.delete name env
         t'    = generalize (applyEnv s3 (env, cons)) (apply s3 t2)
         env'' = M.insert name t' env'
-    return (Nothing, s3, (env'', cons), A.Assignment (name A.:@ apply s3 t2) (apply s3 v1))
+
+    let t2' = case t2 of
+          _ :=> ty -> if null preds then ty else map appify (L.nub preds) :-> ty
+          _ -> if null preds then t1' else map appify (L.nub preds) :-> t1'
+
+    return (Nothing, s3, (env'', cons), [A.Assignment (name A.:@ apply s3 t2') (apply s3 $ if not (null args) then A.Lambda (L.nub $ map annotate args) (A.Return v'') t2' else v'')])
   tyStatement (Sequence stmts :> pos) = do
     (t1, s1, e1, v1) <- foldlM (\(t, s, e, v) stmt -> do
       (t', s', e', v') <- local (e `union`) $ tyStatement stmt
       case check s s' of
         Right s'' -> return (t', s'', e' `union` e, v ++ [v'])
         Left err -> throwError (err, Nothing, pos)) (Nothing, M.empty, (M.empty, M.empty), []) stmts
-    return (t1, s1, e1, A.Sequence v1)
+    return (t1, s1, e1, [A.Sequence $ concat v1])
   tyStatement (If cond thenStmt elseStmt :> pos) = do
     (t1, s1, e1, v1) <- tyExpression cond
     (t2, s2, e2, v2) <- tyStatement thenStmt
@@ -141,7 +227,7 @@ module Core.TypeChecking.Type where
       Just (Right s) -> do
         let s5 = s `compose` s4
         case mgu (apply s5 t1) Bool of
-          Right _ -> return (apply s5 t2, s5, apply s5 $ e1 `union` e2 `union` e3, A.If v1 v2 v3)
+          Right _ -> return (apply s5 t2, s5, apply s5 $ e1 `union` e2 `union` e3, [A.If v1 (A.Sequence v2) (A.Sequence v3)])
           Left x -> throwError (
             x, Just "Expression should return a boolean type",
             getPosition cond)
@@ -169,10 +255,10 @@ module Core.TypeChecking.Type where
           Just "Try to add statements in each branch", pos)
   tyStatement (Return expr :> pos) = do
     (t1, s1, e1, v1) <- tyExpression expr
-    return (Just t1, s1, e1, A.Return v1)
+    return (Just t1, s1, e1, [A.Return v1])
   tyStatement (Expression expr :> pos) = do
     (t1, s1, e1, v1) <- tyExpression (expr :> pos)
-    return (Just t1, s1, e1, A.Expression v1)
+    return (Nothing, s1, e1, [A.Expression v1])
   tyStatement (Enum name annot values :> pos) = do
     -- Creating a fresh type foreach type of reunion
     generic <- mapM (const fresh) annot
@@ -186,13 +272,13 @@ module Core.TypeChecking.Type where
           Nothing -> name A.:@ header) values
     env <- ask
     let cons = M.fromList $ map (\(x A.:@ ty) -> (x, generalize env ty)) tvs
-    return (Nothing, M.empty, B.second (M.union cons) env, A.Enum (name, TApp (TId name) (M.elems table)) tvs)
+    return (Nothing, M.empty, B.second (M.union cons) env, [A.Enum (name, TApp (TId name) (M.elems table)) tvs])
   tyStatement (Extern n args ret :> pos) = do
     env <- ask
     args' <- mapM (`createType` M.empty) args
     ret' <- createType ret M.empty
     let t = args' :-> ret'
-    return (Nothing, M.empty, B.first (M.insert n (generalize env t)) env, A.Extern n args' ret')
+    return (Nothing, M.empty, B.first (M.insert n (generalize env t)) env, [A.Extern n args' ret'])
   tyStatement z@(Match expr cases :> pos) = do
     (pat_t, s1, e, pat') <- tyExpression expr
 
@@ -205,12 +291,12 @@ module Core.TypeChecking.Type where
       case t' of
         Nothing -> throwError ("Pattern does not return anything", Nothing, pos)
         Just t' -> return (s3, acc ++ [(apply s3 t, apply s3 t', s3, (apply s3 p, apply s3 e))])) (s1, []) cases
-  
-    if null res 
+
+    if null res
       then throwError ("No case matches in pattern matching", Nothing, pos)
       else do
         let (_, t, _, _) = head res
-        
+
         let s = foldl (\acc (tp, te, s, _) ->
                 let r = compose <$> mgu t te <*> mgu tp pat_t
                     r' = compose <$> r <*> acc
@@ -220,12 +306,12 @@ module Core.TypeChecking.Type where
                     r' = compose <$> r <*> acc
                   in compose <$> r' <*> pure s) (Right sub) $ reverse res
         let s' = compose <$> s <*> s2
-        
+
         -- Checking against patterns
         let tys = map (\(x, _, _, _) -> case s of
                     Right s -> apply s x
                     Left _ -> x) res
-        
+
         let s'' = foldl (\acc x -> compose <$> patUnify x tys <*> acc) (Right M.empty) tys
 
         -- Checking against bodys
@@ -237,11 +323,152 @@ module Core.TypeChecking.Type where
 
         case compose <$> (compose <$> s'' <*> s''') <*> s' of
           Right s -> do
-            let patterns' = map (\(_, _, _, (x, y)) -> (apply s x, apply s y)) res
+            let patterns' = map (\(_, _, _, (x, y)) -> (apply s x, apply s (A.Sequence y))) res
 
             -- (Maybe Type, Substitution, Env, A.TypedStatement)
-            return (Just $ apply s t, s, (M.empty, M.empty), A.Match pat' patterns')
+            return (Just $ apply s t, s, (M.empty, M.empty), [A.Match pat' patterns'])
           Left e -> throwError (e, Nothing, pos)
+  tyStatement (Class annots name fields :> pos) = do
+    -- Creating a fresh type foreach type of reunion
+    generic <- mapM (const fresh) annots
+    -- Recreating a map mapping generic name to type
+    let table = M.fromList (zip annots generic)
+    let header = TApp (TId name) $ M.elems table
+    let cls = IsIn name (M.elems table)
+
+    let tvs = map (\(name, ty) -> let ty' = replace ty table in (name A.:@ case ty' of
+          clss :=> t -> (cls : clss) :=> t
+          _ -> [cls] :=> ty')) fields
+    env <- ask
+    let ty = map (\(name A.:@ ty) -> case ty of
+            cls :=> (args :-> t) -> args :-> t
+            cls :=> args -> args
+            _ -> ty) tvs
+    let cons = M.fromList $ zipWith (\x ty -> (x, generalize env ty)) (map fst fields) ty
+    let datType = TApp (TId name) $ M.elems table
+    let patterns = A.AppP name (map (uncurry A.VarP . unannotate) tvs)
+
+    let env' = applyTypes (`M.union` M.fromList (map (B.second (generalize env) . unannotate) tvs)) env
+    let enum = A.Enum (name, TApp (TId name) $ M.elems table) [name A.:@ (ty :-> datType)]
+    let functions = map ((\(name, ty) ->
+          A.Assignment
+            (name A.:@ ([datType] :-> ty))
+            (A.Lambda ["$s" A.:@ datType]
+              (A.Match (A.Variable "$s" datType) [
+                (patterns, A.Return (A.Variable name (case ty of
+                  cls :=> ty -> map appify cls :-> ty
+                  _ -> ty
+                  )))
+              ]) ty)) . unannotate) tvs
+    return (Nothing, M.empty, env', enum : functions)
+  tyStatement (Instance subs name ty fields :> pos) = do
+    argsMap <- mapM (const fresh) subs
+    let table = M.fromList (zip (map fst subs) argsMap)
+    let subClasses = concatMap (\(name, ty) ->  map (\x -> IsIn x [table M.! name]) ty) subs
+
+    header <- createType ty table
+    let cls' = IsIn name [header]
+    let name' = createInstName [cls']
+
+    fields' <- mapM (\(name', method) ->
+      ask >>= \(t, _) -> case M.lookup name' t of
+        Just ty' -> do
+          -- create an instance of the method
+          t' <- tyInstantiate ty'
+
+          (t1, s1, e, v') <- tyExpression method
+          -- adding classes to the inferred type
+          let t1' = case t1 of
+                cls :=> ty -> (cls `L.union` (cls' : subClasses)) :=> ty
+                _ -> (cls' : subClasses) :=> t1
+          -- unifying it with instantatied method type
+          let s2 = mgu t1' t'
+          case s2 of
+            Right s -> do
+              e <- ask
+              -- returning inferred type, inferred value, inferred method scheme and substitution
+              return ((apply s t1, apply s v'), M.singleton name' (generalize e (apply s t1)), s)
+            Left x -> throwError (x, Nothing, pos)
+        Nothing -> throwError ("Unknown variable " ++ name' ++ " in " ++ name ++ " implementation.", Nothing, pos)) fields
+
+    let tys = map (\((ty, _), _, _) -> ty) fields'
+    let fields'' = map (\((_, f), _, _) -> f) fields'
+
+    let s = map (\(_, _, s) -> s) fields'
+    let s' = foldl1 compose s
+
+    freshInstance (apply s' [cls'], (name', apply s' subClasses))
+
+    (fields'', args, tys) <- unzip3 <$> forM (zip fields'' tys) (\(v', t1') -> do
+      (v'', args, preds) <- resolveInstances (v' :> pos)
+      let t1 = case t1' of
+            _ :=> ty -> if null preds then ty else preds :=> ty
+            _ -> if null preds then t1' else preds :=> t1'
+      return (v'', args, t1))
+
+    let datType = apply s' $ TApp (TId name) [apply s' header]
+    let ty' = (cls' : subClasses) :=> (tys :-> datType)
+    let call = A.FunctionCall (A.Constructor name ty') (apply s' fields'') datType
+
+    let subConstraints = map (\(IsIn cls ty) -> TApp (TId cls) $ apply s' ty) subClasses
+    let subNames = map (\(IsIn cls ty) -> cls ++ createTypeInstName (apply s' ty)) subClasses
+    let args' = L.nub $ concat args
+    return (Nothing, M.empty, (M.empty, M.empty), [A.Assignment (name' A.:@ datType) (if null args' then call else A.Lambda (map annotate args') (A.Return call) (map snd args' :-> datType))])
+
+  resolveInstancesStmt :: MonadType m => Located A.TypedStatement -> m (A.TypedStatement, [(String, Type)], [Class])
+  resolveInstancesStmt (A.Assignment (name A.:@ ty) expr :> pos) = do
+    (e', tcs, cls) <- resolveInstances (expr :> pos)
+    return (A.Assignment (name A.:@ ty) e', tcs, cls)
+  resolveInstancesStmt (A.Return expr :> pos) = do
+    (e', tcs, cls) <- resolveInstances (expr :> pos)
+    return (A.Return e', tcs, cls)
+  resolveInstancesStmt (A.Sequence exprs :> pos) = do
+    (e', tcs, cls) <- unzip3 <$> mapM (resolveInstancesStmt . (:> pos)) exprs
+    return (A.Sequence e', concat tcs, concat cls)
+  resolveInstancesStmt (A.If cond then' else' :> pos) = do
+    (cond', tcs, cls) <- resolveInstances (cond :> pos)
+    (then'', tcs', cls') <- resolveInstancesStmt (then' :> pos)
+    (else'', tcs'', cls'') <- resolveInstancesStmt (else' :> pos)
+    return (A.If cond' then'' else'', tcs ++ tcs' ++ tcs'', cls ++ cls' ++ cls'')
+  resolveInstancesStmt (A.Expression e :> pos) = do
+    (e', tcs, cls) <- resolveInstances (e :> pos)
+    return (A.Expression e', tcs, cls)
+  resolveInstancesStmt (A.Match expr cases :> pos) = do
+    (expr', tcs, cls) <- resolveInstances (expr :> pos)
+    (cases', tcs', cls') <- unzip3 <$> mapM (\(p, e) -> do
+      (e', tcs', cls') <- resolveInstancesStmt (e :> pos)
+      return ((p, e'), tcs', cls')) cases
+    return (A.Match expr' cases', tcs ++ concat tcs', cls ++ concat cls')
+  resolveInstancesStmt (A.Modified n e :> pos) = do
+    (e', tcs, cls) <- resolveInstances (e :> pos)
+    return (A.Modified n e', tcs, cls)
+  resolveInstancesStmt (x :> _) = return (x, [], [])
+
+  resolveInstances :: MonadType m => Located A.TypedExpression -> m (A.TypedExpression, [(String, Type)], [Class])
+  resolveInstances (A.Variable n t :> pos) = case t of
+    cls :=> ty -> do
+      env <- instances
+      (calls, tcs, preds) <- find' pos cls env
+      return (if not (null calls) then A.FunctionCall (A.Variable n (map appify (L.nub cls) :-> ty)) calls ty else A.Variable n t, L.nub tcs, L.nub preds)
+    _ -> return (A.Variable n t, [], [])
+  resolveInstances (A.FunctionCall e x t :> pos) = do
+    (e', tcs, cls) <- resolveInstances (e :> pos)
+    (x', tcs', cls') <- unzip3 <$> mapM (resolveInstances . (:> pos)) x
+    return (A.FunctionCall e' x' t, L.nub $ tcs ++ concat tcs', L.nub $ cls ++ concat cls')
+  resolveInstances (A.Lambda xs e t :> pos) = do
+    (e', tcs, cls) <- resolveInstancesStmt (e :> pos)
+    return (A.Lambda xs e' t, tcs, cls)
+  resolveInstances (A.LetIn (x A.:@ t) e b ty :> pos) = do
+    (e', tcs, cls) <- resolveInstances (e :> pos)
+    let t1 = case t of
+          _ :=> ty -> if null cls then ty else map appify (L.nub cls) :-> ty
+          _ -> if null cls then t else map appify (L.nub cls) :-> t
+    (b', tcs', cls') <- resolveInstances (b :> pos)
+    return (A.LetIn (x A.:@ t1) (if null tcs then e' else A.Lambda (map annotate $ L.nub tcs) (A.Return e') t1) b' ty, L.nub tcs', L.nub cls')
+  resolveInstances (x :> _) = return (x, [], [])
+
+  annotate :: (String, Type) -> A.Annoted String
+  annotate (x, t) = x A.:@ t
 
   tyExpression :: MonadType m => Located Expression -> m (Type, Substitution, Env, A.TypedExpression)
   tyExpression (LetIn (name :@ ty) value body :> pos) = do
@@ -274,11 +501,10 @@ module Core.TypeChecking.Type where
     let env'  = M.delete name env
         t'    = generalize (applyEnv s3 (env, cons)) (apply s3 t2)
         env'' = M.insert name t' env'
-    
+
     (t3, s2, e2, b') <- local (applyTypes . const $ apply s3 env'') $ tyExpression body
     let s4 = compose s2 s3
     return (t2, s4, apply s4 (env'', cons), A.LetIn (name A.:@ apply s4 t2) v1 b' t3)
-
   tyExpression (Variable name :> pos) = do
     (env, cons) <- ask
     case M.lookup name env of
@@ -300,7 +526,7 @@ module Core.TypeChecking.Type where
         let s3 = s `compose` s1 `compose` s2
         tv <- fresh
         case mgu (apply s3 t1) (ListT tv) of
-          Right s4 -> do
+          Right s4 ->
             return (apply s4 tv, s4 `compose` s3, e1 `union` e2, A.Index v1 v2)
           Left x -> throwError (x, Just "Make sure you passed a list or a string", pos)
       Left x -> throwError (x, Nothing, pos)
@@ -323,7 +549,7 @@ module Core.TypeChecking.Type where
     case t1 of
       Just t -> do
         let argTy = apply s1 tvs
-        return (apply s1 $ argTy :-> t, s1, (env, cons), A.Lambda (zipWith (A.:@) args' argTy) (apply s1 b) (apply s1 $ argTy :-> t))
+        return (apply s1 $ argTy :-> t, s1, (env, cons), A.Lambda (zipWith (A.:@) args' argTy) (apply s1 (A.Sequence b)) (apply s1 $ argTy :-> t))
       Nothing -> throwError (
         "Lambda does not return anything",
         Just "Try to add expressions or statements in body", pos)
@@ -335,8 +561,8 @@ module Core.TypeChecking.Type where
       (t', s', e', a') <- local (apply s) $ tyExpression x
       return (t ++ [t'], s `compose` s', e' `union` e, a ++ [a'])) ([], s1, e, []) xs
     case mgu (t2 :-> tv) (apply s2 t1) of
-      Right s3 -> 
-        return (apply s3 tv, s3 `compose` s2 `compose` s1, B.bimap (apply s3) (apply s3) e, A.FunctionCall n1 args (apply s3 (t2 :-> tv)))
+      Right s3 ->
+        return (apply s3 tv, s3 `compose` s2 `compose` s1, B.bimap (apply s3) (apply s3) e, apply s3 $ A.FunctionCall n1 args (apply s3 (t2 :-> tv)))
       Left x -> throwError (x, Nothing, pos)
   tyExpression (Literal l :> _) = do
     env <- ask
@@ -344,7 +570,7 @@ module Core.TypeChecking.Type where
   tyExpression ((BinaryOp op e1 e2) :> pos) = do
     (t1, s1, e1, v1) <- tyExpression (FunctionCall (Variable op :> pos) [e1, e2] :> pos)
     case v1 of
-      A.FunctionCall (A.Variable op t) [e1', e2'] ty -> do
+      A.FunctionCall (A.Variable op t) [e1', e2'] ty ->
         return (t1, s1, e1, A.BinaryOp op e1' e2')
       _ -> throwError ("Error that should not happen", Nothing, pos)
   tyExpression (List elems :> pos) = do
@@ -378,7 +604,7 @@ module Core.TypeChecking.Type where
     let s2 = mgu t (TRec [(property, tv)])
     let s3 = compose <$> s2 <*> pure s1
     case s3 of
-      Right s -> do
+      Right s ->
         return (apply s tv, s, apply s e, A.Object v1 property)
       Left x -> throwError (x, Nothing, pos)
   tyExpression (Ternary cond e1 e2 :> pos) = do
@@ -471,10 +697,10 @@ module Core.TypeChecking.Type where
 
   runCheck :: MonadIO m => [Located Statement] -> m (Either (String, Maybe String, (SourcePos, SourcePos)) [A.TypedStatement])
   runCheck stmt =
-    (snd <$>) <$> foldlM (\e x -> case e of
-      Right (e, a) -> do
-        x <- runExceptT $ runRWST (tyStatement x) e 0
+    ((\(_, x, _) -> x) <$>) <$> foldlM (\e x -> case e of
+      Right (e, a, i) -> do
+        x <- runExceptT $ runRWST (tyStatement x) e i
         case x of
-          Right ((_, _, e, a'), _, _) -> return (Right (e, a ++ [a']))
+          Right ((_, _, e', a'), i, _) -> return (Right (e' `union` e, a ++ a', i))
           Left err -> return (Left err)
-      Left err -> return (Left err)) (Right ((env, M.empty), [])) stmt
+      Left err -> return (Left err)) (Right ((env, M.empty), [], (0, []))) stmt

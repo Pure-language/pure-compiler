@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 module Core.TypeChecking.Type.Methods where
   import Core.TypeChecking.Substitution (Types(..), Substitution)
-  import Core.TypeChecking.Type.Definition (Type(..), TypeEnv, Scheme (Forall), Env)
+  import Core.TypeChecking.Type.Definition (Type(..), TypeEnv, Scheme (Forall), Env, Class (IsIn))
   import qualified Data.Set as S
   import qualified Data.Map as M
   import Data.Bifunctor (second, first)
@@ -18,6 +18,7 @@ module Core.TypeChecking.Type.Methods where
     free (TRec fs) = S.unions $ map (free . snd) fs
     free (RefT t) = free t
     free (TApp n xs) = S.unions (map free xs)
+    free (cs :=> t) = free t `S.union` free cs
     free _ = S.empty
 
     apply s (TVar i) = case M.lookup i s of
@@ -27,8 +28,13 @@ module Core.TypeChecking.Type.Methods where
     apply s (ListT t) = ListT $ apply s t
     apply s (TRec fs) = TRec $ map (second $ apply s) fs
     apply s (RefT t) = RefT (apply s t)
-    apply s (TApp n xs) = TApp n $ map (apply s) xs
+    apply s (TApp n xs) = TApp (apply s n) $ map (apply s) xs
+    apply s (cs :=> t) = apply s cs :=> apply s t
     apply _ s = s
+  
+  instance Types Class where
+    free (IsIn _ t) = free t
+    apply s (IsIn c t) = IsIn c (apply s t)
   
   instance Types a => Types [a] where
     free = foldr (S.union . free) S.empty
@@ -99,6 +105,9 @@ module Core.TypeChecking.Type.Methods where
 
   applyTypes :: (TypeEnv -> TypeEnv) -> Env -> Env
   applyTypes f (ty, cons) = (f ty, cons)
+  
+  applyCons' :: (TypeEnv -> TypeEnv) -> Env -> Env
+  applyCons' f (ty, cons) = (ty, f cons)
 
   union :: (Ord k1, Ord k2) => (M.Map k1 v1, M.Map k2 v2) -> (M.Map k1 v1, M.Map k2 v2) -> (M.Map k1 v1, M.Map k2 v2)
   union (m1, m2) (m3, m4) = (M.union m1 m3, M.union m2 m4)

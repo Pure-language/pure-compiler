@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 module Core.TypeChecking.Unification where
   import Core.TypeChecking.Substitution (Substitution, Types (free, apply))
-  import Core.TypeChecking.Type.Definition (Type(..))
+  import Core.TypeChecking.Type.Definition (Type(..), Class (IsIn))
   import qualified Data.Map as M
   import Core.TypeChecking.Type.Methods (compose)
   import Data.These (These(..))
@@ -9,11 +9,12 @@ module Core.TypeChecking.Unification where
   import Data.Align (Semialign(alignWith))
   import Data.List (delete, union)
   import Control.Monad (foldM)
+  import Debug.Trace (traceShow)
   
   variable :: Int -> Type -> Either String Substitution
   variable n t
     | t == TVar n = Right M.empty
-    | n `elem` free t = Left $ "Occurs check failed: " ++ show t
+    | n `elem` free t = Left $ "Occurs check failed in " ++ show t ++ " with " ++ show (TVar n)
     | otherwise = Right $ M.singleton n t
 
   align :: (Eq b, Eq a) => [(a, b)] -> [(a, b)] -> [((a, b), (a, b))]
@@ -28,6 +29,23 @@ module Core.TypeChecking.Unification where
                 This a -> Right (M.singleton i (apply s1 a))
                 That b -> Right (M.singleton i (apply s2 b))
                 These a b -> mgu (apply s1 a) (apply s2 b)) s1 s2
+
+  constraintCheck :: [Class] -> [Class] -> Either String Substitution
+  constraintCheck cs1 cs2 = foldl compose M.empty <$> m
+    where m = sequence $ alignWith (\case
+                That a -> Right M.empty
+                This b -> Right M.empty
+                These a b -> mguClass a b) cs1 cs2
+
+  mguClass :: Class -> Class -> Either String Substitution  
+  mguClass (IsIn c t) (IsIn c' t')
+    | c == c' = mguList t t'
+    | otherwise = Left $ "Classes " ++ show c ++ " and " ++ show c' ++ " do not match"
+
+  mguList :: [Type] -> [Type] -> Either String Substitution
+  mguList t1 t2 = foldl (\acc (t, t') -> case mgu t t' of
+    Right s -> compose <$> (acc >>= check s) <*> pure s
+    Left s -> Left s) (Right M.empty) $ zip t1 t2
 
   mgu :: Type -> Type -> Either String Substitution
   mgu (TVar i) t = variable i t
@@ -45,6 +63,10 @@ module Core.TypeChecking.Unification where
   mgu Char Char = Right M.empty
   mgu (RefT t) (RefT t') = mgu t t'
   mgu Void Void = Right M.empty
+  mgu (ps1 :=> t1) (ps2 :=> t2) = 
+    compose <$> constraintCheck ps1 ps2 <*> mgu t1 t2
+  mgu t (_ :=> t2) = mgu t t2
+  mgu (_ :=> t) t2 = mgu t t2
   mgu a@(TApp n xs) b@(TApp n' xs') = if n == n' && length xs == length xs'
     then foldl (\acc (t, t') -> case mgu t t' of
                   Right s -> compose <$> (acc >>= check s) <*> acc

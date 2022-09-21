@@ -5,18 +5,28 @@ module Core.TypeChecking.Type.Definition where
   data Type
     = TVar Int
     | [Type] :-> Type
+    | [Class] :=> Type
     | Int | Float | Bool | Char | Void
     | ListT Type | TRec [(String, Type)]
     | TId String
     | TApp Type [Type]
     | RefT Type
     deriving (Eq, Ord)
+    
+  data Class = IsIn String [Type]
+    deriving (Eq, Ord)
+  type InstanceName = String
+  type Instance = ([Class], (InstanceName, [Class]))
+  type Instances = [Instance]
 
   type TypeEnv = Map String Scheme
   type Env = (TypeEnv, TypeEnv)
 
   data Scheme = Forall [Int] Type
     deriving (Eq, Ord, Show)
+
+  instance Show Class where
+    show (IsIn c ts) = c ++ " " ++ unwords (map show ts)
 
   instance Show Type where
     show (TVar i) = "t" ++ show i
@@ -32,3 +42,4 @@ module Core.TypeChecking.Type.Definition where
     show (RefT t) = "ref " ++ show t
     show (TId s) = s
     show (TApp s args) = show s ++ (if null args then "" else "<" ++ intercalate ", " (map show args) ++ ">")
+    show (cs :=> t) = intercalate ", " (map show cs) ++ " => " ++ show t
