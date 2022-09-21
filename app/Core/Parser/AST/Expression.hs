@@ -22,6 +22,8 @@ module Core.Parser.AST.Expression where
     | Enum String [String] [(String, Maybe [Declaration])]
     | Extern String [Declaration] Declaration
     | Match (Located Expression) [(Located Expression, Located Statement)]
+    | Instance [(String, [String])] String Declaration [(String, Located Expression)]
+    | Class [String] String [(String, Declaration)]
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration

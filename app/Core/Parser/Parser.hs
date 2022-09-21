@@ -13,7 +13,7 @@ module Core.Parser.Parser where
   import Core.Parser.AST
   import Debug.Trace (traceShow)
   import Data.Maybe (fromMaybe)
-  
+
   {- LEXER PART -}
   languageDef =
     emptyDef {  Token.commentStart    = "/*"
@@ -21,8 +21,8 @@ module Core.Parser.Parser where
               , Token.commentLine     = "//"
               , Token.identStart      = letter
               , Token.identLetter     = alphaNum
-              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in"]
-              , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->"] }
+              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in", "for", "impl"]
+              , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->", "<", ">"] }
 
   lexer :: GenTokenParser String u Identity
   lexer = Token.makeTokenParser languageDef
@@ -71,28 +71,34 @@ module Core.Parser.Parser where
   -- Type parsing --
 
   generics :: Parser [String]
-  generics = reservedOp "<" *> commaSep identifier <* reservedOp ">"
+  generics = Token.angles lexer $ commaSep identifier
 
-  type' :: Parser Declaration 
-  type' =  try (string "char" $> CharE) 
-       <|> application <|> struct <|> ref <|> custom
-       <|> try (string "str" $> StrE) 
-       <|> try (string "int" $> IntE) 
-       <|> try (string "float" $> FloatE)
-       <|> try (string "void" $> VoidE)
+  type' :: Parser Declaration
+  type' = buildExpressionParser table typeTerm
+    where table = [[ Postfix $ makeUnaryOp (do
+            args <- Token.angles lexer $ commaSep type'
+            return (\(Id t) -> AppE t args)) ]]
+
+  typeTerm :: Parser Declaration
+  typeTerm =  try (reserved "char" $> CharE)
+       <|> struct <|> ref
+       <|> try (reserved "str" $> StrE)
+       <|> try (reserved "int" $> IntE)
+       <|> try (reserved "float" $> FloatE)
+       <|> try (reserved "void" $> VoidE)
        <|> arrow <|> generic <|> array
        <|> parens type'
 
   application :: Parser Declaration
   application = do
-    f <- try $ identifier <* reservedOp "<"
-    args <- commaSep type'
-    reservedOp ">"
-    return $ AppE f args
+    try $ do
+      n <- identifier
+      args <- parens $ commaSep type'
+      return $ AppE n args
 
   struct :: Parser Declaration
   struct = do
-    reserved "struct" 
+    reserved "struct"
     reservedOp "{"
     fields <- commaSep (do
       name <- identifier
@@ -109,19 +115,13 @@ module Core.Parser.Parser where
     type' <- type'
     return (name, type')
 
-  custom :: Parser Declaration
-  custom = do
-    reserved "extern"
-    name <- identifier
-    return (AppE name [])
-
-  generic :: Parser Declaration 
+  generic :: Parser Declaration
   generic = Id <$> identifier
 
-  array :: Parser Declaration 
+  array :: Parser Declaration
   array = Array <$> Token.brackets lexer type'
-  
-  arrow :: Parser Declaration 
+
+  arrow :: Parser Declaration
   arrow = do
     reserved "fun"
     annot <- fromMaybe [] <$> optionMaybe generics
@@ -139,6 +139,8 @@ module Core.Parser.Parser where
   topLevel = choice [
       extern,
       enum,
+      instance',
+      class',
       functionStmt,
       assignment
     ]
@@ -156,6 +158,46 @@ module Core.Parser.Parser where
       return',
       block
     ]
+
+  class' :: Pure Statement
+  class' = do
+    s <- getPosition
+    reserved "struct"
+    name <- identifier
+    gen <- fromMaybe [] <$> optionMaybe generics
+    reservedOp "{"
+    fields <- commaSep field
+    spaces *> reservedOp "}"
+    e <- getPosition
+    return $ Class gen name fields :> (s, e)
+
+  generics' :: Parser [(String, [String])]
+  generics' = do
+    Token.angles lexer $ commaSep (do
+      name <- identifier
+      args <- fromMaybe [] <$> optionMaybe (do
+        reservedOp ":"
+        sepBy1 identifier (reservedOp "+"))
+      return (name, args))
+
+  instance' :: Pure Statement
+  instance' = do
+    s <- getPosition
+    reserved "impl"
+    gen <- fromMaybe [] <$> optionMaybe generics'
+    name <- identifier
+    reserved "for"
+    t <- type'
+    reservedOp "{"
+    fields <- commaSep $ do
+      reserved "let"
+      name <- identifier
+      reservedOp "="
+      expr <- expression
+      return (name, expr)
+    reservedOp "}"
+    e <- getPosition
+    return $ Instance gen name t fields :> (s, e)
 
   extern :: Pure Statement
   extern = do
@@ -182,7 +224,7 @@ module Core.Parser.Parser where
   enumField :: Parser (String, Maybe [Declaration])
   enumField = do
     name <- identifier
-    ty <- optionMaybe $ parens (commaSep type') 
+    ty <- optionMaybe $ parens (commaSep type')
     return (name, ty)
 
   return' :: Pure Statement
@@ -251,7 +293,7 @@ module Core.Parser.Parser where
 
   expression :: Pure Expression
   expression = buildExpressionParser table term
-  
+
   term :: Pure Expression
   term = try float <|> number <|> stringLit <|> charLit <|> list
       <|> (letIn <?> "let expression")
@@ -264,7 +306,7 @@ module Core.Parser.Parser where
   letIn = do
     s <- getPosition
     reserved "let"
-    (lhs :> _) <- annoted 
+    (lhs :> _) <- annoted
     reserved "="
     rhs <- expression
     reserved "in"
@@ -280,7 +322,7 @@ module Core.Parser.Parser where
     cases <- Token.braces lexer $ commaSep case'
     e <- getPosition
     return $ Match expr cases :> (s, e)
-  
+
   case' :: Parser (Located Expression, Located Statement)
   case' = do
     expr <- expression
@@ -300,7 +342,7 @@ module Core.Parser.Parser where
     reservedOp "}"
     e <- getPosition
     return (Structure fields :> (s, e))
-  
+
   float :: Pure Expression
   float = do
     s <- getPosition
