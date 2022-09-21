@@ -7,7 +7,7 @@ module Core.ANF where
   import Debug.Trace (traceShowM)
   import Control.Monad.RWS (MonadRWS, execRWST, evalRWST, local, MonadReader (ask))
   import Data.Bifunctor (Bifunctor(first, second))
-  import Data.List (union)
+  import Data.List (union, nub)
   
   type Block = TypedStatement
   type MonadANF m = (MonadRWS [(String, String)] () Int m)
@@ -28,8 +28,10 @@ module Core.ANF where
     (lets, e') <- local (`union` [(name, name)]) $  convertExpr e
     return (lets, Assignment n e')
   convertStmt (Sequence xs) = do
-    (lets, xs') <- first concat . unzip <$> mapM convertStmt xs
-    return ([], createSequence $ createLets lets ++ xs')
+    (lets, xs') <- unzip <$> mapM convertStmt xs
+    let lets' = map createLets lets
+    let xs = nub $ concatMap (\(lets, x) -> lets ++ [x]) (zip lets' xs')
+    return ([], createSequence $ xs)
   convertStmt (If e s1 s2) = do
     (lets, e') <- convertExpr e
     (lets1, s1') <- convertStmt s1
@@ -91,8 +93,7 @@ module Core.ANF where
     name1 <- freshName
     (lets1, e') <- local (`union` [(n, name1)]) $ convertExpr e
     (lets2, body') <- local (`union` [(n, name1)]) $ convertExpr body
-    traceShowM (n, body')
-    return ([(name1 :@ ty, e')] ++ lets1 ++ lets2, body')
+    return (lets1 ++ [(name1 :@ ty, e')] ++ lets2, body')
   convertExpr (Reference e) = do
     (lets, e') <- convertExpr e
     return (lets, Reference e')
@@ -114,7 +115,7 @@ module Core.ANF where
 
   runANF :: Monad m => [TypedStatement] -> m [TypedStatement]
   runANF stmts = do
-    x <- first concat . unzip . fst <$> evalRWST (mapM convertStmt stmts) [] 0
-    let lets = createLets $ fst x
-    return $ lets ++ snd x
+    x <- unzip . fst <$> evalRWST (mapM convertStmt stmts) [] 0
+    let lets = map createLets $ fst x
+    return . nub $ concatMap (\(lets, x) -> lets ++ [x]) (zip lets (snd x))
     
