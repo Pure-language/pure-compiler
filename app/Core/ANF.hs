@@ -62,44 +62,44 @@ module Core.ANF where
   convertExpr (Lambda args body t) = do
     (lets, body') <- convertStmt body
     return (lets, Lambda args body' t)
-  convertExpr (BinaryOp op e1 e2) = do
+  convertExpr (BinaryOp op e1 e2 t) = do
     (lets1, e1') <- convertExpr e1
     (lets2, e2') <- convertExpr e2
-    return (lets1 ++ lets2, BinaryOp op e1' e2')
-  convertExpr (UnaryOp op e) = do
+    return (lets1 ++ lets2, BinaryOp op e1' e2' t)
+  convertExpr (UnaryOp op e t) = do
     (lets, e') <- convertExpr e
-    return (lets, UnaryOp op e')
-  convertExpr (List exprs) = do
+    return (lets, UnaryOp op e' t)
+  convertExpr (List exprs t) = do
     (lets, exprs') <- first concat . unzip <$> mapM convertExpr exprs
-    return (lets, List exprs')
-  convertExpr (Index e i) = do
+    return (lets, List exprs' t)
+  convertExpr (Index e i t) = do
     (lets1, e') <- convertExpr e
     (lets2, i') <- convertExpr i
-    return (lets1 ++ lets2, Index e' i')
-  convertExpr (Structure fields t) = do
+    return (lets1 ++ lets2, Index e' i' t)
+  convertExpr (Structure n fields t) = do
     (lets, fields') <- first concat . unzip <$> mapM (\(x, i) -> do
       (lets, e) <- convertExpr i
       return (lets, (x, e))) fields
-    return (lets, Structure fields' t) 
-  convertExpr (Object o f) = do
+    return (lets, Structure n fields' t) 
+  convertExpr (Object o f t) = do
     (lets, o') <- convertExpr o
-    return (lets, Object o' f)
-  convertExpr (Ternary c t e) = do
+    return (lets, Object o' f t)
+  convertExpr (Ternary c t e ty) = do
     (lets1, c') <- convertExpr c
     (lets2, t') <- convertExpr t
     (lets3, e') <- convertExpr e
-    return (lets1 ++ lets2 ++ lets3, Ternary c' t' e')
+    return (lets1 ++ lets2 ++ lets3, Ternary c' t' e' ty)
   convertExpr (LetIn (n :@ ty) e body t) = do
     name1 <- freshName
     (lets1, e') <- local (`union` [(n, name1)]) $ convertExpr e
     (lets2, body') <- local (`union` [(n, name1)]) $ convertExpr body
     return (lets1 ++ [(name1 :@ ty, e')] ++ lets2, body')
-  convertExpr (Reference e) = do
+  convertExpr (Reference e t) = do
     (lets, e') <- convertExpr e
-    return (lets, Reference e')
-  convertExpr (Unreference e) = do
+    return (lets, Reference e' t)
+  convertExpr (Unreference e t) = do
     (lets, e') <- convertExpr e
-    return (lets, Unreference e')
+    return (lets, Unreference e' t)
   convertExpr (Variable n t) = ask >>= \env -> case lookup n env of
     Just n' -> return ([], Variable n' t)
     Nothing -> return ([], Variable n t)
