@@ -9,7 +9,7 @@ module Core.TypeChecking.Type.AST where
     | Return TypedExpression
     | Enum (String, Type) [Annoted String]
     | Record (String, Type) [Annoted String]
-    | Extern String [Type] Type
+    | Extern String Type
     | Match TypedExpression [(TypedPattern, TypedStatement)]
     deriving Eq
 
@@ -28,17 +28,17 @@ module Core.TypeChecking.Type.AST where
     | Lambda [Annoted String] TypedStatement Type    
     | Variable String Type
     | Constructor String Type
-    | Literal Literal
-    | BinaryOp String TypedExpression TypedExpression
-    | UnaryOp String TypedExpression
-    | List [TypedExpression]
-    | Index TypedExpression TypedExpression
-    | Structure [(String, TypedExpression)] Type
-    | Object TypedExpression String
-    | Ternary TypedExpression TypedExpression TypedExpression
+    | Literal Literal Type
+    | BinaryOp String TypedExpression TypedExpression Type
+    | UnaryOp String TypedExpression Type
+    | List [TypedExpression] Type
+    | Index TypedExpression TypedExpression Type
+    | Structure String [(String, TypedExpression)] Type
+    | Object TypedExpression String Type
+    | Ternary TypedExpression TypedExpression TypedExpression Type
     | LetIn (Annoted String) TypedExpression TypedExpression Type
-    | Reference TypedExpression
-    | Unreference TypedExpression
+    | Reference TypedExpression Type
+    | Unreference TypedExpression Type
     deriving Eq
 
   data Literal

@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 module Core.TypeChecking.Type.Methods where
   import Core.TypeChecking.Substitution (Types(..), Substitution)
-  import Core.TypeChecking.Type.Definition (Type(..), TypeEnv, Scheme (Forall), Env, Class (IsIn))
+  import Core.TypeChecking.Type.Definition (Type(..), TypeEnv, Scheme (Forall), Env, Class (IsIn), ConsEnv)
   import qualified Data.Set as S
   import qualified Data.Map as M
   import Data.Bifunctor (second, first)
@@ -62,7 +62,7 @@ module Core.TypeChecking.Type.Methods where
     apply s (Return e) = Return (apply s e)
     apply s (Enum n e) = Enum n (apply s e)
     apply s (Record n e) = Enum n (apply s e)
-    apply s (Extern n t r) = Extern n (apply s t) (apply s r)
+    apply s (Extern n r) = Extern n (apply s r)
     apply s (Match e ps) = Match (apply s e) (apply s ps)
 
   instance Types (Annoted a) where
@@ -78,17 +78,17 @@ module Core.TypeChecking.Type.Methods where
     apply s (FunctionCall n xs t) = FunctionCall (apply s n) (apply s xs) (apply s t)
     apply s (Lambda args b t) = Lambda (apply s args) (apply s b) (apply s t)
     apply s (Variable n t) = Variable n (apply s t)
-    apply _ (Literal l) = Literal l
-    apply s (BinaryOp op e1 e2) = BinaryOp op (apply s e1) (apply s e2)
-    apply s (UnaryOp op e) = UnaryOp op (apply s e)
-    apply s (List xs) = List (apply s xs)
-    apply s (Index e i) = Index (apply s e) (apply s i)
-    apply s (Structure fs t) = Structure (map (second $ apply s) fs) (apply s t)
-    apply s (Object e p) = Object (apply s e) p
-    apply s (Ternary c t e) = Ternary (apply s c) (apply s t) (apply s e)
-    apply s (Reference e) = Reference (apply s e)
+    apply s (Literal l t) = Literal l (apply s t)
+    apply s (BinaryOp op e1 e2 t) = BinaryOp op (apply s e1) (apply s e2) (apply s t)
+    apply s (UnaryOp op e t) = UnaryOp op (apply s e) (apply s t)
+    apply s (List xs t) = List (apply s xs) (apply s t)
+    apply s (Index e i t) = Index (apply s e) (apply s i) (apply s t)
+    apply s (Structure n fs t) = Structure n (map (second $ apply s) fs) (apply s t)
+    apply s (Object e p t) = Object (apply s e) p (apply s t)
+    apply s (Ternary c t e ty) = Ternary (apply s c) (apply s t) (apply s e) (apply s ty)
+    apply s (Reference e t) = Reference (apply s e) (apply s t)
     apply s (Constructor n t) = Constructor n (apply s t)
-    apply s (Unreference e) = Unreference (apply s e)
+    apply s (Unreference e t) = Unreference (apply s e) (apply s t)
     apply s (LetIn v e b t) = LetIn (apply s v) (apply s e) (apply s b) (apply s t)
 
   instance Types TypedPattern where
@@ -106,7 +106,7 @@ module Core.TypeChecking.Type.Methods where
   applyTypes :: (TypeEnv -> TypeEnv) -> Env -> Env
   applyTypes f (ty, cons) = (f ty, cons)
   
-  applyCons' :: (TypeEnv -> TypeEnv) -> Env -> Env
+  applyCons' :: (ConsEnv -> ConsEnv) -> Env -> Env
   applyCons' f (ty, cons) = (ty, f cons)
 
   union :: (Ord k1, Ord k2) => (M.Map k1 v1, M.Map k2 v2) -> (M.Map k1 v1, M.Map k2 v2) -> (M.Map k1 v1, M.Map k2 v2)

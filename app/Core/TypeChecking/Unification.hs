@@ -62,6 +62,8 @@ module Core.TypeChecking.Unification where
   mgu Bool Bool = Right M.empty
   mgu Char Char = Right M.empty
   mgu (RefT t) (RefT t') = mgu t t'
+  mgu (RefT t) (ListT t') = mgu t t'
+  mgu (ListT t) (RefT t') = mgu t t'
   mgu Void Void = Right M.empty
   mgu (ps1 :=> t1) (ps2 :=> t2) = 
     compose <$> constraintCheck ps1 ps2 <*> mgu t1 t2
@@ -72,9 +74,10 @@ module Core.TypeChecking.Unification where
                   Right s -> compose <$> (acc >>= check s) <*> acc
                   Left s -> Left s) (Right M.empty) $ zip xs xs'
     else Left $ "Type mismatch: " ++ show a ++ " and " ++ show b
-  mgu (TRec fs1) (TRec fs2) = 
+  mgu t1@(TRec fs1) t2@(TRec fs2) = 
     let f = align fs1 fs2 `union` align fs2 fs1
       in foldM (\s (x, y) -> do
         s' <- mgu (snd x) (snd y)
         return $ compose s s') M.empty f
+  mgu (TId n) (TId n') = if n == n' then Right M.empty else Left $ "Type mismatch: " ++ show n ++ " and " ++ show n'
   mgu s1 s2 = Left $ "Type " ++ show s1 ++ " mismatches with type " ++ show s2

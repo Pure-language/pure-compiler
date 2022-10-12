@@ -19,8 +19,13 @@ module Core.TypeChecking.Type.Definition where
   type Instance = ([Class], (InstanceName, [Class]))
   type Instances = [Instance]
 
+  data Constructor
+    = Fun Scheme
+    | Struct Scheme
+
   type TypeEnv = Map String Scheme
-  type Env = (TypeEnv, TypeEnv)
+  type ConsEnv = Map String Scheme
+  type Env = (TypeEnv, ConsEnv)
 
   data Scheme = Forall [Int] Type
     deriving (Eq, Ord, Show)
