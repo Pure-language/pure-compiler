@@ -21,7 +21,7 @@ module Core.Parser.Parser where
               , Token.commentLine     = "//"
               , Token.identStart      = letter
               , Token.identLetter     = alphaNum
-              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in", "for", "impl"]
+              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->", "<", ">"] }
 
   lexer :: GenTokenParser String u Identity
@@ -139,6 +139,7 @@ module Core.Parser.Parser where
   topLevel = choice [
       extern,
       enum,
+      structureStmt,
       instance',
       class',
       functionStmt,
@@ -149,7 +150,8 @@ module Core.Parser.Parser where
   statement = choice [
       extern,
       enum,
-      (match <?> "pattern matching"),
+      structureStmt,
+      match <?> "pattern matching",
       modification,
       try stmtExpr,
       functionStmt,
@@ -162,7 +164,7 @@ module Core.Parser.Parser where
   class' :: Pure Statement
   class' = do
     s <- getPosition
-    reserved "struct"
+    reserved "extension"
     name <- identifier
     gen <- fromMaybe [] <$> optionMaybe generics
     reservedOp "{"
@@ -204,10 +206,11 @@ module Core.Parser.Parser where
     s <- getPosition
     reserved "extern"
     name <- identifier
-    args <- parens $ commaSep type'
+    annot <- fromMaybe [] <$> optionMaybe generics
+    reserved ":"
     ret <- type'
     e <- getPosition
-    return $ Extern name args ret :> (s, e)
+    return $ Extern annot name ret :> (s, e)
 
   enum :: Pure Statement
   enum = do
@@ -272,9 +275,25 @@ module Core.Parser.Parser where
   block :: Pure Statement
   block = do
     (_ :> s) <- locate $ reserved "{"
-    stmts <- many statement <?> "statement"
+    stmts <- many (statement <* optionMaybe (reserved ";")) <?> "statement"
     reserved "}"
     return (Sequence stmts :> s)
+
+  structureStmt :: Pure Statement
+  structureStmt = do
+    s <- getPosition
+    reserved "struct"
+    name <- identifier
+    gen <- fromMaybe [] <$> optionMaybe generics
+    reservedOp "{"
+    fields <- commaSep (do
+      f <- identifier
+      reservedOp ":"
+      t <- type'
+      return (f, t))
+    reservedOp "}"
+    e <- getPosition
+    return (Record name gen fields :> (s, e))
 
   functionStmt :: Pure Statement
   functionStmt = do
@@ -297,8 +316,8 @@ module Core.Parser.Parser where
   term :: Pure Expression
   term = try float <|> number <|> stringLit <|> charLit <|> list
       <|> (letIn <?> "let expression")
-      <|> (structure <?> "structure")
       <|> (function <?> "lambda")
+      <|> (structure <?> "structure")
       <|> (variable <?> "variable")
       <|> (parens expression <?> "expression")
 
@@ -330,19 +349,6 @@ module Core.Parser.Parser where
     stmt <- statement
     return (expr, stmt)
 
-  structure :: Pure Expression
-  structure = do
-    s <- getPosition
-    reserved "struct" >> reservedOp "{"
-    fields <- commaSep (do
-      f <- identifier
-      reservedOp ":"
-      t <- expression
-      return (f, t))
-    reservedOp "}"
-    e <- getPosition
-    return (Structure fields :> (s, e))
-
   float :: Pure Expression
   float = do
     s <- getPosition
@@ -364,6 +370,21 @@ module Core.Parser.Parser where
     e <- getPosition
     return (Literal (C (c :> pos)) :> (s, e))
 
+  structure :: Pure Expression
+  structure = do
+    s <- getPosition
+    reserved "struct"
+    name <- identifier
+    reservedOp "{"
+    fields <- commaSep (do
+      f <- identifier
+      reservedOp ":"
+      t <- expression
+      return (f, t))
+    reservedOp "}"
+    e <- getPosition
+    return (Structure name fields :> (s, e))
+
   stringLit :: Pure Expression
   stringLit = do
     s@(_ :> pos) <- locate $ Token.stringLiteral lexer
@@ -377,7 +398,8 @@ module Core.Parser.Parser where
   variable :: Pure Expression
   variable = do
     (v :> s) <- locate identifier
-    return (Variable v :> s)
+    cast <- fromMaybe [] <$> optionMaybe (reservedOp "<" *> commaSep type' <* reservedOp ">")
+    return (Variable v cast :> s)
 
   annoted :: Pure (Annoted String)
   annoted = do
@@ -416,9 +438,11 @@ module Core.Parser.Parser where
   table = [
       [Infix (do
         char '`'
+        s <- getPosition
         fun <- identifier
+        e' <- getPosition
         char '`'
-        return (\x@(_ :> (p, _)) y@(_ :> (_, e)) -> BinaryOp fun x y :> (p, e) )) AssocLeft],
+        return (\x@(_ :> (p, _)) y@(_ :> (_, e)) -> FunctionCall (Variable fun [] :> (s, e')) [x, y] :> (p, e) )) AssocLeft],
       [Postfix $ makeUnaryOp postfix],
       [Prefix $ makeUnaryOp prefix],
       equalities,

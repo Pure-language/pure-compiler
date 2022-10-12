@@ -20,10 +20,11 @@ module Core.Parser.AST.Expression where
     | Expression Expression
     | Return (Located Expression)
     | Enum String [String] [(String, Maybe [Declaration])]
-    | Extern String [Declaration] Declaration
+    | Extern [String] String Declaration
     | Match (Located Expression) [(Located Expression, Located Statement)]
     | Instance [(String, [String])] String Declaration [(String, Located Expression)]
     | Class [String] String [(String, Declaration)]
+    | Record String [String] [(String, Declaration)]
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration
@@ -32,16 +33,17 @@ module Core.Parser.AST.Expression where
   data Expression
     = FunctionCall (Located Expression) [Located Expression]
     | Lambda [String] [Annoted String] (Located Statement)
-    | Variable String
+    | Variable String [Declaration]
     | Literal Literal
     | BinaryOp String (Located Expression) (Located Expression)
     | UnaryOp String (Located Expression)
     | List [Located Expression]
     | Index (Located Expression) (Located Expression)
     | LetIn (Annoted String) (Located Expression) (Located Expression)
-    | Structure [(String, Located Expression)]
+    | Structure String [(String, Located Expression)]
     | Object (Located Expression) String
     | Ternary (Located Expression) (Located Expression) (Located Expression)
     | Reference (Located Expression)
     | Unreference (Located Expression)
+    | Cast (Located Expression) [Declaration]
     deriving (Show, Eq)
