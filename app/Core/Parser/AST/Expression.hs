@@ -1,10 +1,10 @@
 module Core.Parser.AST.Expression where
   import Core.Parser.AST.Literal (Literal, Located)
   import Text.Parsec (SourcePos)
-  
+
   data Declaration
-    = Id String
-    | Arrow [String] [Declaration] Declaration
+    = Id String [String]
+    | Arrow [Declaration] [Declaration] Declaration
     | Array Declaration
     | StructE [(String, Declaration)]
     | AppE String [Declaration]
@@ -19,12 +19,12 @@ module Core.Parser.AST.Expression where
     | Sequence [Located Statement]
     | Expression Expression
     | Return (Located Expression)
-    | Enum String [String] [(String, Maybe [Declaration])]
-    | Extern [String] String Declaration
+    | Enum String [Declaration] [(String, Maybe [Declaration])]
+    | Extern [Declaration] String Declaration
     | Match (Located Expression) [(Located Expression, Located Statement)]
     | Instance [(String, [String])] String Declaration [(String, Located Expression)]
-    | Class [String] String [(String, Declaration)]
-    | Record String [String] [(String, Declaration)]
+    | Class [Declaration] String [(String, Declaration)]
+    | Record String [Declaration] [(String, Declaration)]
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration
@@ -32,7 +32,7 @@ module Core.Parser.AST.Expression where
 
   data Expression
     = FunctionCall (Located Expression) [Located Expression]
-    | Lambda [String] [Annoted String] (Located Statement)
+    | Lambda [Declaration] [Annoted String] (Located Statement)
     | Variable String [Declaration]
     | Literal Literal
     | BinaryOp String (Located Expression) (Located Expression)

@@ -20,8 +20,8 @@ module Core.Parser.Parser where
               , Token.commentEnd      = "*/"
               , Token.commentLine     = "//"
               , Token.identStart      = letter
-              , Token.identLetter     = alphaNum
-              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct"]
+              , Token.identLetter     = alphaNum <|> char '_'
+              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct", "mut"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->", "<", ">"] }
 
   lexer :: GenTokenParser String u Identity
@@ -70,14 +70,17 @@ module Core.Parser.Parser where
 
   -- Type parsing --
 
-  generics :: Parser [String]
-  generics = Token.angles lexer $ commaSep identifier
+  generics :: Parser [Declaration]
+  generics = Token.angles lexer $ commaSep type'
 
   type' :: Parser Declaration
   type' = buildExpressionParser table typeTerm
-    where table = [[ Postfix $ makeUnaryOp (do
-            args <- Token.angles lexer $ commaSep type'
-            return (\(Id t) -> AppE t args)) ]]
+    where table = [
+            [ 
+              Postfix $ makeUnaryOp (do
+                args <- Token.angles lexer $ commaSep type'
+                return (\(Id t _) -> AppE t args)) 
+            ]]
 
   typeTerm :: Parser Declaration
   typeTerm =  try (reserved "char" $> CharE)
@@ -116,7 +119,12 @@ module Core.Parser.Parser where
     return (name, type')
 
   generic :: Parser Declaration
-  generic = Id <$> identifier
+  generic = do
+    name <- identifier
+    args <- fromMaybe [] <$> optionMaybe (do
+      reservedOp ":"
+      sepBy1 identifier (reservedOp "+"))
+    return $ Id name args
 
   array :: Parser Declaration
   array = Array <$> Token.brackets lexer type'
@@ -143,7 +151,8 @@ module Core.Parser.Parser where
       instance',
       class',
       functionStmt,
-      assignment
+      assignment,
+      mutable
     ]
 
   statement :: Pure Statement
@@ -156,6 +165,7 @@ module Core.Parser.Parser where
       try stmtExpr,
       functionStmt,
       assignment,
+      mutable,
       condition,
       return',
       block
@@ -272,6 +282,16 @@ module Core.Parser.Parser where
     e <- getPosition
     return (Assignment lhs rhs :> (s, e))
 
+  mutable :: Pure Statement
+  mutable = do
+    s <- getPosition
+    reserved "mut"
+    (lhs :> _) <- annoted
+    whiteSpace >> reserved "="
+    rhs@(_ :> p) <- expression
+    e <- getPosition
+    return (Assignment lhs (Reference rhs :> p) :> (s, e))
+
   block :: Pure Statement
   block = do
     (_ :> s) <- locate $ reserved "{"
@@ -303,10 +323,11 @@ module Core.Parser.Parser where
     gen <- fromMaybe [] <$> optionMaybe generics
     args <- parens $ commaSep annoted
     let args' = map (\(a :> _) -> a) args
+    let argsTy = map (\(_ :@ ann) -> ann) args'
     ret <- optionMaybe type'
     body <- spaces *> block
     e <- getPosition
-    return $ Assignment (name :@ ret) (Lambda gen args' body :> (s, e)) :> (s, e)
+    return $ Assignment (name :@ (Arrow gen <$> sequence argsTy <*> ret)) (Lambda gen args' body :> (s, e)) :> (s, e)
 
   -- Expression parsing --
 
@@ -477,7 +498,7 @@ module Core.Parser.Parser where
           equalities = map (\op -> Infix (reservedOp op >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp op x y :> (s, e))) AssocLeft) equalityOp
 
           -- Prefix operators
-          prefix = ref <|> unref
+          prefix = unref
           ref = do
             s <- getPosition
             reserved "ref"
