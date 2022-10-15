@@ -9,14 +9,12 @@ module Main where
   import Core.TypeChecking.Type (runCheck)
   import Text.Parsec.Pos
   import Core.Compiler.Compiler (runCompiler)
-  import Core.Conversion.Close (runClosureConversion)
-  import Core.Conversion.Hoisting (runHoisting)
   import Core.ANF (runANF)
-  import Core.Monomorphization (monomorphize)
   import Core.Compiler.CodeGen.Generation (from)
-  import Core.Compiler.Type (CompilerState(toplevel))
-  import Core.Isolation (isolateToplevel)
   import Data.Bifunctor (Bifunctor(bimap))
+  import Core.Garbage (runGarbageMonad)
+  import Core.Conversion.Hoisting (runHoisting)
+  import Core.Conversion.Close (runClosureConversion)
   
   instance HasHints Void [Char] where
     hints _ = mempty
@@ -30,18 +28,13 @@ module Main where
         ast' <- runCheck ast
         case ast' of
           Right ast -> do
-            ast <- monomorphize ast
-            (structs, ast) <- runClosureConversion ast
-            ast <- runHoisting ast
-            let (enums, ast') = bimap concat concat $ unzip $ map isolateToplevel ast
-            mapM_ ((>> putStrLn "") . print) ast'
-            ast <- runANF (enums ++ structs ++ ast')
+            ast <- runANF ast
+            --ast <- runGarbageMonad ast
             mapM_ ((>> putStrLn "") . print) ast
-            (c, st) <- runCompiler ast
-            --mapM_ ((>> putStrLn "") . print) c
-            let tl = unlines $ reverse $ toplevel st
+          
+            c <- runCompiler ast
             let c' = concatMap ((++";") . from) c
-            writeFile "test.c" (tl ++ c')
+            writeFile "test.js" (c' ++ "main();")
           Left (error, msg, (p1, p2)) -> do
             let p1' = (sourceLine p1, sourceColumn p1)
             let p2' = (sourceLine p2, sourceColumn p2)
