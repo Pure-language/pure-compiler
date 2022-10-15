@@ -30,7 +30,7 @@ module Core.ANF where
   convertStmt (Sequence xs) = do
     (lets, xs') <- unzip <$> mapM convertStmt xs
     let lets' = map createLets lets
-    let xs = nub $ concatMap (\(lets, x) -> lets ++ [x]) (zip lets' xs')
+    let xs = concatMap (\(lets, x) -> lets ++ [x]) (zip lets' xs')
     return ([], createSequence $ xs)
   convertStmt (If e s1 s2) = do
     (lets, e') <- convertExpr e
@@ -117,5 +117,5 @@ module Core.ANF where
   runANF stmts = do
     x <- unzip . fst <$> evalRWST (mapM convertStmt stmts) [] 0
     let lets = map createLets $ fst x
-    return . nub $ concatMap (\(lets, x) -> lets ++ [x]) (zip lets (snd x))
+    return $ concatMap (\(lets, x) -> lets ++ [x]) (zip lets (snd x))
     
