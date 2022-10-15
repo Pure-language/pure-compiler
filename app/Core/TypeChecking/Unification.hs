@@ -1,7 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 module Core.TypeChecking.Unification where
+  import Control.Monad.RWS
+  import Control.Monad.Except
   import Core.TypeChecking.Substitution (Substitution, Types (free, apply))
-  import Core.TypeChecking.Type.Definition (Type(..), Class (IsIn))
+  import Core.TypeChecking.Type.Definition (Type(..), Class (IsIn), Env, Instances)
   import qualified Data.Map as M
   import Core.TypeChecking.Type.Methods (compose)
   import Data.These (These(..))
@@ -10,6 +13,11 @@ module Core.TypeChecking.Unification where
   import Data.List (delete, union)
   import Control.Monad (foldM)
   import Debug.Trace (traceShow)
+  import Text.Parsec (SourcePos)
+  import Data.Foldable (foldlM)
+
+  type ReaderEnv = (M.Map String Type, Env)
+  type MonadType m = (MonadRWS ReaderEnv () (Int, Instances) m, MonadIO m, MonadError (String, Maybe String, (SourcePos, SourcePos)) m, MonadFail m)
   
   variable :: Int -> Type -> Either String Substitution
   variable n t
@@ -62,8 +70,6 @@ module Core.TypeChecking.Unification where
   mgu Bool Bool = Right M.empty
   mgu Char Char = Right M.empty
   mgu (RefT t) (RefT t') = mgu t t'
-  mgu (RefT t) (ListT t') = mgu t t'
-  mgu (ListT t) (RefT t') = mgu t t'
   mgu Void Void = Right M.empty
   mgu (ps1 :=> t1) (ps2 :=> t2) = 
     compose <$> constraintCheck ps1 ps2 <*> mgu t1 t2
