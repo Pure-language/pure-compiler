@@ -2,59 +2,17 @@ module Core.Compiler.Type.Monad where
   import Control.Monad.RWS (MonadState (get, put), modify, gets)
   import Data.Map (Map, insert, delete, empty)
   import Core.TypeChecking.Type.Definition (Type)
-  import Core.Compiler.CodeGen (CppAST)
+  import Core.Compiler.CodeGen (IR)
+  import qualified Data.Map as M
+  
+  type Constructors = Map String String
+  type MonadCompiler m = MonadState Constructors m
 
-  -- Mapping constructor name to enum type
-  type Environment = Map String (String, Bool)
+  addConstructor :: MonadCompiler m => String -> String -> m ()
+  addConstructor name constructor = modify $ insert name constructor
 
-  -- Mapping function to generic arguments
-  type GenericMap = Map String [Type]
+  removeConstructor :: MonadCompiler m => String -> m ()
+  removeConstructor name = modify $ delete name
 
-  data CompilerState = CompilerState {
-    environment :: Environment,
-    genericMap :: GenericMap,
-    toplevel :: [String],
-    structures :: [(String, Type)],
-    counter :: Int
-  } deriving Show
-
-  emptyState :: CompilerState
-  emptyState = CompilerState {
-    environment = empty,
-    genericMap = empty,
-    toplevel = [],
-    structures = [],
-    counter = 0
-  }
-
-  type MonadCompiler m = MonadState CompilerState m
-
-  addEnv :: MonadCompiler m => String -> Bool -> String -> m ()
-  addEnv name b enum = modify  $ \s -> s { environment = insert name (enum, b) (environment s) }
-
-  getEnv :: MonadCompiler m => m Environment
-  getEnv = gets environment
-
-  addGeneric :: MonadCompiler m => String -> [Type] -> m ()
-  addGeneric name args = modify $ \s -> s { genericMap = insert name args (genericMap s) }
-
-  removeGeneric :: MonadCompiler m => String -> m ()
-  removeGeneric name = modify $ \s -> s { genericMap = delete name (genericMap s) }
-
-  setGenerics :: MonadCompiler m => GenericMap -> m ()
-  setGenerics g = modify $ \s -> s { genericMap = g }
-
-  addToplevel :: MonadCompiler m => String -> m ()
-  addToplevel name = modify $ \s -> s { toplevel = name : toplevel s }
-
-  addStructure :: MonadCompiler m => Type -> m String
-  addStructure t = do
-    name <- ("struct" ++) . show <$> gets counter
-    modify $ \s -> s { structures = (name, t) : structures s }
-    return name
-
-  inc :: MonadCompiler m => m Int
-  inc = do
-    s <- get
-    put $ s { counter = counter s + 1 }
-    return $ counter s
+  getConstructor :: MonadCompiler m => String -> m (Maybe String)
+  getConstructor = gets . M.lookup

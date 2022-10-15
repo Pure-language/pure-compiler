@@ -1,65 +1,60 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE LambdaCase #-}
 module Core.Compiler.Compiler where
-  import Core.Compiler.Type
   import qualified Data.Map as M
-  import Data.List (intercalate, union)
+  import Data.List (intercalate, union, (\\))
   import Core.TypeChecking.Type.Definition
   import Core.TypeChecking.Type.AST
-  import Core.Compiler.CodeGen (CppAST(..), CType, StructField (SType))
+  import Core.Compiler.CodeGen (IR(..), varify)
   import Control.Monad.RWS (gets, modify)
   import Control.Monad.State (StateT(runStateT), evalStateT)
-  import Core.Compiler.Modules.ADT (createEnum, createStructure)
+  import Core.Compiler.Modules.ADT (compileData)
   import Core.Compiler.Modules.Pattern (compileCase)
   import Core.TypeChecking.Type.Pretty ()
   import Control.Arrow (Arrow(second))
   import Debug.Trace (traceShowM)
+  import Core.Compiler.Type (MonadCompiler, getConstructor)
+  
+  compileToplevel :: MonadCompiler m => TypedStatement -> m [IR]
+  compileToplevel (Assignment (name :@ ty) e) = do
+    e' <- compileExpression e
+    return [IRDeclaration (varify name) e']
+  compileToplevel z@(Enum (n, ty) fields) = (:[]) <$> compileData z
+  compileToplevel (Extern n ret) = return []
+  compileToplevel (Record (name, ty) fields) = return []
+  compileToplevel x = error $ "Not implemented: " ++ show x
 
-  compileStatement :: MonadCompiler m => TypedStatement -> m [CppAST]
-  compileStatement (Assignment (name :@ ty) (Lambda args body t)) = do
-    ret <- fromType $ case t of
-      _ :-> ret -> ret
-      _ -> error "Not a function"
-    args <- mapM (\(x :@ t) -> (x,) <$> fromType t) args
-    body' <- compileStatement body
-    return [CFunction ret name args (if length body' == 1 then head body' else CSequence body')]
+  compileStatement :: MonadCompiler m => TypedStatement -> m [IR]
   compileStatement (Assignment (name :@ ty) e) = do
     e' <- compileExpression e
-    ty' <- fromType ty
-    return [CDeclaration (name, ty') e']
+    return [IRDeclaration (varify name) e']
   compileStatement (Modified n e) = do
     n' <- compileExpression n
     e' <- compileExpression e
-    return [CModification n' e']
+    return [IRModification (IRStructProp n' "value") e']
   compileStatement (If e s1 s2) = do
     e' <- compileExpression e
     s1' <- compileStatement s1
     s2' <- compileStatement s2
-    return [CIfElse e' (CSequence s1') (CSequence s2')]
-  compileStatement (Record (name, ty) fields) = do
-    modify $ \s -> s { structures = (name, ty) : structures s }
-    fields' <- mapM (\(x :@ t) -> SType x <$> fromType t) fields
-    return [CStruct name fields']
+    return [IRIfElse e' (IRSequence s1') (IRSequence s2')]
   compileStatement (Sequence stmts) = do
     stmts' <- mapM compileStatement stmts
     return $ concat stmts'
   compileStatement (Expression e)
     = (:[]) <$> compileExpression e
   compileStatement (Return e)
-    = (:[]) . CReturn <$> compileExpression e
-  compileStatement z@(Enum (n, ty) fields) = ([createEnum z]++) <$> createStructure z
-  compileStatement (Extern n args ret) = do
-    args' <- mapM fromType args
-    ret' <- fromType ret
-    return [CExtern n args' ret']
+    = (:[]) . IRReturn <$> compileExpression e
   compileStatement (Match x pats) = do
     x <- compileExpression x
     xs <- mapM (\(p, b) -> do
       b <- compileStatement b
       compileCase p x b) pats
-    return $ [if length xs == 1 then head xs else foldl1 (\acc (CIf cond then') -> CIfElse cond then' acc) xs]
+    return $ [if length xs == 1 then head xs else foldl1 (\acc (IRIf cond then') -> IRIfElse cond then' acc) xs]
+  compileStatement x = error $ "Not implemented: " ++ show x
 
-  compileExpression :: MonadCompiler m => TypedExpression -> m CppAST
-  compileExpression (Variable name t) = return $ CVariable name
+  compileExpression :: MonadCompiler m => TypedExpression -> m IR
+  compileExpression (Variable "void" _) = return (IRVariable "null")
+  compileExpression (Variable name t) = return $ IRVariable (varify name)
   --compileExpression (FunctionCall (Variable n) args ty) = do
   --  args' <- mapM compileExpression args
   --  ty' <- gets genericMap >>= \e -> return (case M.lookup n e of
@@ -69,48 +64,41 @@ module Core.Compiler.Compiler where
   compileExpression (FunctionCall call args ty) = do
     call' <- compileExpression call
     args' <- mapM compileExpression args
-    return $ CCall call' args' []
-  compileExpression (Reference c) = CRef <$> compileExpression c
-  compileExpression (Unreference c) = CDeref <$> compileExpression c
+    return $ IRCall call' args'
+  compileExpression (Reference c t) = IRLamStruct . (:[]) . ("value",) <$> compileExpression c
+  compileExpression (Unreference c t) = IRDeref <$> compileExpression c
   compileExpression (Constructor c t) = do
-    getEnv >>= \env -> case M.lookup c env of
-      Just (e, i) -> return $ if not i then CCall (CVariable c) [] [] else CVariable c
-      _ -> error $ "Constructor " ++ c ++ " is not an enum"
-  compileExpression (Structure fields t) = do
+    getConstructor (varify c) >>= \case
+      Just obj -> return $ IRStructProp (IRVariable obj) (varify c)
+      Nothing -> error "Not a constructor!"
+  compileExpression (Structure name fields t) = do
     fields' <- mapM (\(x, i) -> (x,) <$> compileExpression i) fields
-    ty' <- fromType t
-    return $ CCast ty' $ CLamStruct fields'
-  compileExpression (Object obj f) = do
+    return $ IRLamStruct fields'
+  compileExpression (Object obj f t) = do
     obj' <- compileExpression obj
-    return $ CStructProp obj' f
-  compileExpression (Literal i) = return $ Lit i
-  compileExpression (LetIn (name :@ ty) e (Variable "()" Void) t) = do
+    return $ IRStructProp obj' f
+  compileExpression (Literal i t) = return $ IRLit i
+  compileExpression (Lambda args body t) = do
+    let args' = map (\(n :@ _) -> varify n) args
+    body' <- compileStatement body
+    return $ IRLambda args' (if length body' == 1 then head body' else IRSequence body')
+  compileExpression (BinaryOp op e1 e2 t) = do
+    e1' <- compileExpression e1
+    e2' <- compileExpression e2
+    return $ IRBinCall e1' op e2'
+  compileExpression (UnaryOp op e t) = do
     e' <- compileExpression e
-    ty' <- fromType ty
-    return $ CDeclaration (name, ty') e'
-  compileExpression x = error . show $ x
+    return $ IRUnaryCall op e'
+  compileExpression (Index e1 e2 t) = do
+    e1' <- compileExpression e1
+    e2' <- compileExpression e2
+    return $ IRIndex e1' e2'
+  compileExpression (List xs t) = do
+    xs' <- mapM compileExpression xs
+    return $ IRArray xs'
+  compileExpression x = error $ "Not implemented: " ++ show x
 
-
-
-  --match :: [Type] -> [Type] -> [CType]
-  --match (t:ts) (t':ts') = matchType t t' ++ match ts ts'
-  --match _ _ = []
-
-  --matchType :: Type -> Type -> [CType]
-  --matchType Int Int = ["int"]
-  --matchType Bool Bool = ["bool"]
-  --matchType Char Char = ["char"]
-  --matchType String String = ["char*"]
-  --matchType Float Float = ["float"]
-  --matchType (TVar u) t = [fromType t]
-  --matchType (t1 :-> t2) (t1' :-> t2') = t' `union` matchType t2 t2'
-  --  where t' = foldl union [] $ zipWith matchType t1 t1'
-  --matchType (TApp _ t) (TApp _ t') = foldl union [] $ zipWith matchType t t'
-  --matchType (TRec t) (TRec t') = foldl union [] $ zipWith matchType (map snd t) (map snd t')
-  --matchType (RefT t) (RefT t') = matchType t t'
-  --matchType _ _ = []
-
-  runCompiler :: Monad m => [TypedStatement] -> m ([CppAST], CompilerState)
+  runCompiler :: Monad m => [TypedStatement] -> m [IR]
   runCompiler stmts = do
-    (x, st) <- runStateT (mapM compileStatement stmts) emptyState
-    return (concat x, st)
+    (x, st) <- runStateT (mapM compileToplevel stmts) M.empty
+    return $ concat x

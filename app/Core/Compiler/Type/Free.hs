@@ -1,7 +1,8 @@
 module Core.Compiler.Type.Free where
   import Core.TypeChecking.Type.AST
   import Data.List (union, (\\))
-  import Core.Conversion.Free (unannotate)
+  import Core.TypeChecking.Type (unannotate)
+  
   class Free a where
     free :: a -> [String]
   
@@ -22,17 +23,17 @@ module Core.Compiler.Type.Free where
     free (Lambda args body t) = free body \\ args'
       where args' = map (\(x :@ _) -> x) args
     free (Variable s t) = [s]
-    free (Literal _) = []
-    free (BinaryOp s x y) = free x `union` free y
-    free (UnaryOp s x) = free x
-    free (List xs) = free xs
-    free (Index e i) = free e `union` free i
-    free (Structure fields _) = free $ map snd fields
-    free (Object e _) = free e
-    free (Ternary c t e) = free c `union` free t `union` free e
+    free (Literal _ t) = []
+    free (BinaryOp s x y t) = free x `union` free y
+    free (UnaryOp s x t) = free x
+    free (List xs t) = free xs
+    free (Index e i t) = free e `union` free i
+    free (Structure n fields _) = free $ map snd fields
+    free (Object e _ t) = free e
+    free (Ternary c t e _) = free c `union` free t `union` free e
     free (LetIn s e body t) = free e `union` (free body \\ [fst $ unannotate s])
-    free (Reference c) = free c
-    free (Unreference c) = free c
+    free (Reference c t) = free c
+    free (Unreference c t) = free c
     free (Constructor _ t) =[]
 
   instance Free TypedPattern where
