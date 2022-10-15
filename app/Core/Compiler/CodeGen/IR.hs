@@ -1,43 +1,43 @@
 module Core.Compiler.CodeGen.IR where
   import Core.TypeChecking.Type.AST (Literal)
   import Core.TypeChecking.Type.Pretty ()
+  import Data.Char (isLetter, isPrint, ord)
+  import Text.Printf (printf)
   
-  type CType = String
-  data CppAST
-    = CDeclaration (String, CType) CppAST
-    | CModification CppAST CppAST
-    | CSequence [CppAST]
-    | CReturn CppAST
-    | CStruct String [StructField]
-    | CEnum String [String]
-    | CFunction CType String [(String, CType)] CppAST
-    | CIf CppAST CppAST
-    | CIfElse CppAST CppAST CppAST
-    | CExtern String [CType] CType
+  data IR
+    = IRDeclaration String IR
+    | IRModification IR IR
+    | IRSequence [IR]
+    | IRReturn IR
+    | IRIf IR IR
+    | IRIfElse IR IR IR
 
-    | CCall CppAST [CppAST] [CType]
-    | CLamStruct [(String, CppAST)]
-    | CRef CppAST
-    | CDeref CppAST
-    | CLambda [String] [(String, CType)] CppAST
-    | CVariable String
-    | CBinCall CppAST String CppAST
-    | CStructProp CppAST String
-    | CCast CType CppAST
-    | Lit Literal
+    | IRCall IR [IR]
+    | IRLamStruct [(String, IR)]
+    | IRDeref IR
+    | IRLambda [String] IR
+    | IRVariable String
+    | IRBinCall IR String IR
+    | IRUnaryCall String IR
+    | IRIndex IR IR
+    | IRArray [IR]
+    | IRStructProp IR String
+    | IRLit Literal
     deriving Show
 
-  data StructField
-    = SType String CType
-    deriving Show
+  isIdent :: Char -> Bool
+  isIdent x = isLetter x || x == '_' || x == '$'
 
-  isStatement :: CppAST -> Bool
-  isStatement (CDeclaration _ _) = True
-  isStatement (CModification _ _) = True
-  isStatement (CSequence _) = True
-  isStatement (CReturn _) = True
-  isStatement (CStruct _ _) = True
-  isStatement (CEnum _ _) = True
-  isStatement (CIf _ _) = True
-  isStatement CIfElse {} = True
-  isStatement _ = False
+  varify :: String -> String
+  varify x@(c:_) = (if isIdent c then "" else "$") ++ concatMap (\x -> if isIdent x then [x] else show (ord x)) x
+  varify [] = ""
+
+  encodeUnicode16 :: String -> String
+  encodeUnicode16 = concatMap escapeChar
+    where
+      escapeChar c
+        | c == '\"' = "\\\""
+        | c == '\'' = "\\\'"
+        | ' ' <= c && c <= 'z' = [c]
+        | isPrint c = [c]
+        | otherwise = printf "\\u%04x" (fromEnum c)
