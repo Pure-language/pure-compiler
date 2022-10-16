@@ -26,3 +26,4 @@ module Core.Compiler.CodeGen.Generation where
   from (IRUnaryCall op e) = op ++ from e
   from (IRIndex e i) = from e ++ "[" ++ from i ++ "]"
   from (IRArray e) = "[" ++ intercalate "," (map from e) ++ "]"
+  from (IRTernary cond then' else') = from cond ++ " ? " ++ from then' ++ " : " ++ from else'

@@ -96,6 +96,11 @@ module Core.Compiler.Compiler where
   compileExpression (List xs t) = do
     xs' <- mapM compileExpression xs
     return $ IRArray xs'
+  compileExpression (Ternary e1 e2 e3 t) = do
+    e1' <- compileExpression e1
+    e2' <- compileExpression e2
+    e3' <- compileExpression e3
+    return $ IRTernary e1' e2' e3'
   compileExpression x = error $ "Not implemented: " ++ show x
 
   runCompiler :: Monad m => [TypedStatement] -> m [IR]

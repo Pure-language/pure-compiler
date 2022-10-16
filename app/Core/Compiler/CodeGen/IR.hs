@@ -21,6 +21,7 @@ module Core.Compiler.CodeGen.IR where
     | IRUnaryCall String IR
     | IRIndex IR IR
     | IRArray [IR]
+    | IRTernary IR IR IR
     | IRStructProp IR String
     | IRLit Literal
     deriving Show
