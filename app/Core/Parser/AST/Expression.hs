@@ -25,6 +25,8 @@ module Core.Parser.AST.Expression where
     | Instance [(String, [String])] String Declaration [(String, Located Expression)]
     | Class [Declaration] String [(String, Declaration)]
     | Record String [Declaration] [(String, Declaration)]
+    | Import [String]
+    | Public (Located Statement)
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration

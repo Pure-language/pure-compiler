@@ -145,6 +145,8 @@ module Core.Parser.Parser where
 
   topLevel :: Pure Statement
   topLevel = choice [
+      public,
+      import',
       extern,
       enum,
       structureStmt,
@@ -154,6 +156,13 @@ module Core.Parser.Parser where
       assignment,
       mutable
     ]
+
+  public :: Pure Statement
+  public = do
+    s <- getPosition
+    reserved "pub" 
+    e <- getPosition
+    (:> (s, e)) . Public <$> topLevel
 
   statement :: Pure Statement
   statement = choice [
@@ -291,6 +300,14 @@ module Core.Parser.Parser where
     rhs@(_ :> p) <- expression
     e <- getPosition
     return (Assignment lhs (Reference rhs :> p) :> (s, e))
+
+  import' :: Pure Statement
+  import' = do
+    s <- getPosition
+    reserved "import"
+    m <- sepBy1 identifier (string "::")
+    e <- getPosition
+    return $ Import m:> (s, e)
 
   block :: Pure Statement
   block = do
@@ -498,7 +515,7 @@ module Core.Parser.Parser where
           equalities = map (\op -> Infix (reservedOp op >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp op x y :> (s, e))) AssocLeft) equalityOp
 
           -- Prefix operators
-          prefix = unref
+          prefix = ref <|> unref
           ref = do
             s <- getPosition
             reserved "ref"
