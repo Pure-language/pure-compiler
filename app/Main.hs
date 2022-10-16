@@ -15,6 +15,7 @@ module Main where
   import Core.Garbage (runGarbageMonad)
   import Core.Conversion.Hoisting (runHoisting)
   import Core.Conversion.Close (runClosureConversion)
+  import Core.Import.Resolver (inspectImports)
   
   instance HasHints Void [Char] where
     hints _ = mempty
@@ -25,12 +26,13 @@ module Main where
     x <- readFile file
     case parsePure file x of
       Right ast -> do
+        ast <- inspectImports file ast
         ast' <- runCheck ast
         case ast' of
           Right ast -> do
             ast <- runANF ast
             --ast <- runGarbageMonad ast
-            mapM_ ((>> putStrLn "") . print) ast
+            --mapM_ ((>> putStrLn "") . print) ast
           
             c <- runCompiler ast
             let c' = concatMap ((++";") . from) c
@@ -38,20 +40,22 @@ module Main where
           Left (error, msg, (p1, p2)) -> do
             let p1' = (sourceLine p1, sourceColumn p1)
             let p2' = (sourceLine p2, sourceColumn p2)
+            let file' = sourceName p1
+            x' <- readFile file'
             let pos' = Position p1' p2' $ sourceName p1
             let beautifulExample = err
                   Nothing
                   error
-                  [ (pos', This "While typechecking this")]
+                  [ (pos', This "While typechecking this") ]
                   (maybe [] ((:[]) . Note) msg)
 
             -- Create the diagnostic 
-            let diagnostic  = addFile def file x
+            let diagnostic  = addFile def file' x'
             let diagnostic' = addReport diagnostic beautifulExample
 
             -- Print with unicode characters, colors and the default style
             printDiagnostic stdout True True 4 defaultStyle diagnostic'
       Left err ->
         let diag  = errorDiagnosticFromParseError Nothing "Parse error on input" Nothing err
-            diag' = addFile diag "tests/example.pure" x
+            diag' = addFile diag file x
           in printDiagnostic stderr True True 4 defaultStyle diag'
