@@ -101,29 +101,36 @@ module Core.TypeChecking.Type where
   trimap :: (a -> b) -> (c -> d) -> (e -> f) -> (a, c, e) -> (b, d, f)
   trimap f g h (a, c, e) = (f a, g c, h e)
 
+  isDirectTVar :: Type -> Bool
+  isDirectTVar (TVar _) = True
+  isDirectTVar _ = False
+
   find' :: MonadType m => (SourcePos, SourcePos) -> [Class] -> [([Class], (String, [Class]))] -> m ([A.TypedExpression], [(String, Type)], [Class])
   find' a subCls env = trimap concat concat concat . unzip3 <$> mapM
-    (\x -> if containsTVar' (appify x)
-        then return (map (\z@(IsIn cls tys) ->
-          A.Variable (cls ++ createTypeInstName tys ++ "_f") (appify z)) subCls,
+    (\x@(IsIn _ [ty]) -> if isDirectTVar ty then 
+        return (map (\z@(IsIn cls tys) ->
+          A.Variable (cls ++ createTypeInstName tys) (appify z)) subCls,
           map (\z@(IsIn cls tys) ->
-            (cls ++ createTypeInstName tys ++ "_f", appify z)) subCls, [x])
-        else case map (B.first $ fromRight M.empty) $ filter (isRight . fst) $ map (\z@(cls', _) -> (constraintCheck cls' [x], z)) env of
-      -- If a superclass instance exists
+            (cls ++ createTypeInstName tys, appify z)) subCls, [x])
+      else case map (B.first $ fromRight M.empty) $ filter (isRight . fst) $ map (\z@(cls', _) -> (constraintCheck cls' [x], z)) env of
+      -- ff a superclass instance exists
       [(s, ([z@(IsIn cls t2)], (name, subCls')))] -> do
+        -- finding the subinstances of a class
         (subVar, subTC, cls) <- find' a (apply s subCls') env
-        --liftIO $ print s
         let var = A.Variable name (apply s (appify z))
           in return ([if null subVar
             then var
             else A.FunctionCall var subVar (apply s (appify z))], subTC, cls)
 
+      -- if instance contains generics, then it's must be resolved into
+      -- a arguments map
       xs -> if containsTVar' (appify x)
         then return (map (\z@(IsIn cls tys) ->
-          A.Variable (cls ++ createTypeInstName tys ++ "_f") (appify z)) subCls,
+          A.Variable (cls ++ createTypeInstName tys) (appify z)) subCls,
           map (\z@(IsIn cls tys) ->
-            (cls ++ createTypeInstName tys ++ "_f", appify z)) subCls, [x])
+            (cls ++ createTypeInstName tys, appify z)) subCls, [x])
         else
+          -- if instance does not contain generics, then it must be an error
           if null xs
             then throwError ("No instance found for " ++ show x, Nothing, a)
             else throwError ("Instances " ++ L.intercalate ", " (map (\(_, (x:xs, _)) -> show x) xs) ++ " overlaps for " ++ show x, Nothing, a)) subCls
@@ -398,7 +405,7 @@ module Core.TypeChecking.Type where
     argsMap <- mapM (const fresh) subs
     let table = M.fromList (zip (map fst subs) argsMap)
     let subClasses = concatMap (\(name, ty) -> map (\x -> IsIn x [table M.! name]) ty) subs
-
+    
     header <- createType ty table
     let cls' = IsIn name [header]
     let name' = createInstName [cls']
@@ -412,8 +419,7 @@ module Core.TypeChecking.Type where
 
           (t1, s1, e, v') <- tyExpression method
           -- unifying it with instantatied method type
-          let t' = (cls' : subClasses) :=> tv
-          let s2 = compose <$> mgu t1 t' <*> mgu ty t1
+          let s2 = compose <$> mgu t1 tv <*> mgu ty t1
           case s2 of
             Right s -> do
               (_, e) <- ask
@@ -429,9 +435,9 @@ module Core.TypeChecking.Type where
     let s' = foldl1 compose s
 
     freshInstance (apply s' [cls'], (name', apply s' subClasses))
-    
+
     (fields'', args, tys) <- unzip3 <$> forM (zip fields'' tys) (\(v', t1') -> do
-      (v'', args, preds) <- resolveInstances (v' :> pos)
+      (v'', args, preds) <- resolveInstances (apply s' v' :> pos)
       let t1 = case t1' of
             _ :=> ty -> if null preds then ty else preds :=> ty
             _ -> if null preds then t1' else preds :=> t1'
@@ -445,6 +451,8 @@ module Core.TypeChecking.Type where
     let subNames = map (\(IsIn cls ty) -> cls ++ createTypeInstName (apply s' ty)) subClasses
     let args' = L.nub $ concat args
     return (Just Void, M.empty, (M.empty, M.empty), [A.Assignment (name' A.:@ datType) (if null args' then call else A.Lambda (map annotate args') (A.Return call) (map snd args' :-> datType))])
+  tyStatement (Import _ :> pos) = throwError ("Unexpected import found in scope ", Nothing, pos)
+  tyStatement (Public _ :> pos) = throwError ("Unexpected public found in scope ", Nothing, pos)
 
   resolveInstancesStmt :: MonadType m => Located A.TypedStatement -> m (A.TypedStatement, [(String, Type)], [Class])
   resolveInstancesStmt (A.Assignment (name A.:@ ty) expr :> pos) = do
@@ -469,7 +477,7 @@ module Core.TypeChecking.Type where
     (cases', tcs', cls') <- unzip3 <$> mapM (\(p, e) -> do
       (e', tcs', cls') <- resolveInstancesStmt (e :> pos)
       return ((p, e'), tcs', cls')) cases
-    return (A.Match expr' cases', tcs ++ concat tcs', cls ++ concat cls')
+    return (A.Match expr' cases', L.nub $ tcs ++ concat tcs', L.nub $ cls ++ concat cls')
   resolveInstancesStmt (A.Modified n e :> pos) = do
     (e', tcs, cls) <- resolveInstances (e :> pos)
     return (A.Modified n e', tcs, cls)
@@ -480,7 +488,7 @@ module Core.TypeChecking.Type where
     cls :=> ty -> do
       env <- instances
       (calls, tcs, preds) <- find' pos cls env
-      return (if not (null calls) then A.FunctionCall (A.Variable n (map appify (L.nub cls) :-> ty)) calls ty else A.Variable n t, L.nub tcs, L.nub preds)
+      return (if not (null calls) then A.FunctionCall (A.Variable n (L.nub preds :=> ty)) calls ty else A.Variable n t, L.nub tcs, L.nub preds)
     _ -> return (A.Variable n t, [], [])
   resolveInstances (A.FunctionCall e x t :> pos) = do
     (e', tcs, cls) <- resolveInstances (e :> pos)
@@ -687,7 +695,6 @@ module Core.TypeChecking.Type where
         let s2 = foldl compose M.empty s
         case mgu (apply s2 t') (TRec ts) of
           Right s3 -> do
-            traceShowM (apply s3 (TRec ts))
             return (apply s3 struct, s3 `compose` s2, foldl union (M.empty, M.empty) e, A.Structure name f (apply s3 struct))
           Left err -> throwError (err, Just "Check the fields of the structure", pos)
       Nothing -> throwError (
