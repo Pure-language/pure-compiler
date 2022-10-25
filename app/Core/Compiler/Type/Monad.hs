@@ -4,15 +4,18 @@ module Core.Compiler.Type.Monad where
   import Core.TypeChecking.Type.Definition (Type)
   import Core.Compiler.CodeGen (IR)
   import qualified Data.Map as M
+  import Core.TypeChecking.Type.AST
+  import Control.Arrow (Arrow(first))
+  import Data.Functor
   
   type Constructors = Map String String
-  type MonadCompiler m = MonadState Constructors m
+  type MonadCompiler m = (MonadState (Constructors, Map String TypedStatement) m)
 
   addConstructor :: MonadCompiler m => String -> String -> m ()
-  addConstructor name constructor = modify $ insert name constructor
+  addConstructor name constructor = modify . first $ insert name constructor
 
   removeConstructor :: MonadCompiler m => String -> m ()
-  removeConstructor name = modify $ delete name
+  removeConstructor name = modify . first $ delete name
 
   getConstructor :: MonadCompiler m => String -> m (Maybe String)
-  getConstructor = gets . M.lookup
+  getConstructor e = gets fst <&> M.lookup e

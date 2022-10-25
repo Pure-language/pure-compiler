@@ -12,17 +12,37 @@ module Core.Compiler.Compiler where
   import Core.Compiler.Modules.Pattern (compileCase)
   import Core.TypeChecking.Type.Pretty ()
   import Control.Arrow (Arrow(second))
-  import Debug.Trace (traceShowM)
+  import Debug.Trace (traceShowM, traceShow)
   import Core.Compiler.Type (MonadCompiler, getConstructor)
+  import Core.TypeChecking.Unification (TypeState (modules), Module (Module))
   
-  compileToplevel :: MonadCompiler m => TypedStatement -> m [IR]
-  compileToplevel (Assignment (name :@ ty) e) = do
+  analyseIRModule :: [IR] -> [String]
+  analyseIRModule ((IRExport (IRDeclaration n _)):xs) = n : analyseIRModule xs
+  analyseIRModule (_:xs) = analyseIRModule xs
+  analyseIRModule [] = []
+
+  compileToplevel :: MonadCompiler m => TypeState -> TypedStatement -> m [IR]
+  compileToplevel s (Assignment (name :@ ty) e) = do
     e' <- compileExpression e
     return [IRDeclaration (varify name) e']
-  compileToplevel z@(Enum (n, ty) fields) = (:[]) <$> compileData z
-  compileToplevel (Extern n ret) = return []
-  compileToplevel (Record (name, ty) fields) = return []
-  compileToplevel x = error $ "Not implemented: " ++ show x
+  compileToplevel s z@(Enum (n, ty) fields) = (:[]) <$> compileData z
+  compileToplevel s (Extern n ret) = return []
+  compileToplevel s (Record (name, ty) fields) = return []
+  compileToplevel s (Import expr path) = do
+    xs <- case modules s M.! path of 
+      Module _ stmts -> 
+        analyseIRModule . concat <$> mapM (compileToplevel s) stmts
+    (:[]) . IRImport xs . IRAwait . IRCall (IRVariable "import") . (:[]) <$> compileExpression expr
+  compileToplevel s (Public stmts) = do
+    stmt <- compileToplevel s stmts
+    return $ map IRExport stmt
+  compileToplevel _ x = error $ "Not implemented: " ++ show x
+
+  createIfSequence :: [IR]-> IR
+  createIfSequence [] = error "Empty if sequence"
+  createIfSequence [x] = x
+  createIfSequence (IRIf cond then':xs) = IRIfElse cond then' (createIfSequence xs)
+  createIfSequence _ = error "Invalid if sequence"
 
   compileStatement :: MonadCompiler m => TypedStatement -> m [IR]
   compileStatement (Assignment (name :@ ty) e) = do
@@ -49,18 +69,22 @@ module Core.Compiler.Compiler where
     xs <- mapM (\(p, b) -> do
       b <- compileStatement b
       compileCase p x b) pats
-    return $ [if length xs == 1 then head xs else foldl1 (\acc (IRIf cond then') -> IRIfElse cond then' acc) xs]
+    return $ [if length xs == 1 then head xs else createIfSequence xs]
+  compileStatement (For (n, _) e body) = do
+    e' <- compileExpression e
+    body' <- compileStatement body
+    return [IRFor (varify n) e' (IRSequence body')]
+  compileStatement (While e body) = do
+    e' <- compileExpression e
+    body' <- compileStatement body
+    return [IRWhile e' (IRSequence body')]
+  compileStatement Break = return [IRBreak]
+  compileStatement Continue = return [IRContinue]
   compileStatement x = error $ "Not implemented: " ++ show x
 
   compileExpression :: MonadCompiler m => TypedExpression -> m IR
   compileExpression (Variable "void" _) = return (IRVariable "null")
   compileExpression (Variable name t) = return $ IRVariable (varify name)
-  --compileExpression (FunctionCall (Variable n) args ty) = do
-  --  args' <- mapM compileExpression args
-  --  ty' <- gets genericMap >>= \e -> return (case M.lookup n e of
-  --    Just t -> match t ty
-  --    Nothing -> [])
-  --  return $ CCall (CVariable n) args' ty'
   compileExpression (FunctionCall call args ty) = do
     call' <- compileExpression call
     args' <- mapM compileExpression args
@@ -103,7 +127,7 @@ module Core.Compiler.Compiler where
     return $ IRTernary e1' e2' e3'
   compileExpression x = error $ "Not implemented: " ++ show x
 
-  runCompiler :: Monad m => [TypedStatement] -> m [IR]
-  runCompiler stmts = do
-    (x, st) <- runStateT (mapM compileToplevel stmts) M.empty
+  runCompiler :: Monad m => TypeState -> [TypedStatement] -> m [IR]
+  runCompiler state stmts = do
+    (x, st) <- runStateT (mapM (compileToplevel state) stmts) (M.empty, M.empty)
     return $ concat x

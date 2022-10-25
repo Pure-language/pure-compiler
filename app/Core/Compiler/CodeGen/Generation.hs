@@ -10,6 +10,11 @@ module Core.Compiler.CodeGen.Generation where
   from (IRReturn e) = "return " ++ from e ++ ";"
   from (IRIf cond then') = "if (" ++ from cond ++ ") {\n" ++ from then' ++ "}"
   from (IRIfElse cond then' else') = "if (" ++ from cond ++ ") {\n" ++ from then' ++ "} else {\n" ++ from else' ++ "}"
+  from (IRFor n expr body) = "for(const " ++ n ++ " of " ++ from expr ++ ")" ++ from body
+  from (IRWhile cond body) = "while (" ++ from cond ++ ")" ++ from body
+  from IRContinue = "continue;"
+  from IRBreak = "break;"
+  from (IRImport names from') = "const { " ++ intercalate ", " names ++ " } = " ++ from from' ++ ";"
 
   from (IRCall n args) = from n ++ "(" ++ intercalate "," (map from args) ++ ")"
   from (IRLamStruct fields) = "{" ++ concatMap (\(n, v) -> n ++ ": " ++ from v ++ ", ") fields ++ "}"
@@ -17,7 +22,7 @@ module Core.Compiler.CodeGen.Generation where
   from (IRLambda args body) = 
     "(" ++ intercalate "," args ++ ") => {\n" ++ from body ++ "}"
   from (IRVariable n) = n
-  from (IRBinCall e1 op e2) = from e1 ++ " " ++ op ++ " " ++ from e2
+  from (IRBinCall e1 op e2) = "(" ++ from e1 ++ ") " ++ op ++ " (" ++ from e2 ++ ")"
   from (IRStructProp e n) = from e ++ "." ++ n
   from (IRLit (I i)) = show i
   from (IRLit (F f)) = show f
@@ -27,3 +32,6 @@ module Core.Compiler.CodeGen.Generation where
   from (IRIndex e i) = from e ++ "[" ++ from i ++ "]"
   from (IRArray e) = "[" ++ intercalate "," (map from e) ++ "]"
   from (IRTernary cond then' else') = from cond ++ " ? " ++ from then' ++ " : " ++ from else'
+  from (IRExport e) = "export " ++ from e ++ ";"
+  from (IRAwait e) = "await " ++ from e
+  from (IRIn e1 e2) = from e1 ++ " in " ++ from e2

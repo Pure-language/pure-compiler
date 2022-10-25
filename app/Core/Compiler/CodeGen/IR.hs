@@ -10,7 +10,12 @@ module Core.Compiler.CodeGen.IR where
     | IRSequence [IR]
     | IRReturn IR
     | IRIf IR IR
+    | IRFor String IR IR
+    | IRWhile IR IR
+    | IRContinue | IRBreak
     | IRIfElse IR IR IR
+    | IRExport IR
+    | IRImport [String] IR
 
     | IRCall IR [IR]
     | IRLamStruct [(String, IR)]
@@ -24,6 +29,8 @@ module Core.Compiler.CodeGen.IR where
     | IRTernary IR IR IR
     | IRStructProp IR String
     | IRLit Literal
+    | IRIn IR IR
+    | IRAwait IR
     deriving Show
 
   isIdent :: Char -> Bool
