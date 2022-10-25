@@ -39,7 +39,7 @@ module Main where
             let cs' = map (second (concatMap ((++ ";") . from))) cs
             let c' = concatMap ((++";") . from) c
             mapM_ (\(path, c) -> writeFile (path -<.> ".mjs") c) cs'
-            writeFile "test.mjs" (c' ++ "main();")
+            writeFile (file -<.> ".mjs") (c' ++ "main();")
           err -> printError err "While typechecking this"
       Left err ->
         let diag  = errorDiagnosticFromParseError Nothing "Parse error on input" Nothing err
