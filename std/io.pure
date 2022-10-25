@@ -1,0 +1,11 @@
+import std::classes::show
+
+struct Console {
+  log: fun(str) void
+}
+
+extern console: Console
+
+pub fun print(x) {
+  console.log(show(x))
+}
