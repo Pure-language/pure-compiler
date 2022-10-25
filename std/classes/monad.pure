@@ -1,0 +1,12 @@
+pub extension Functor<f> {
+  map: fun<a, b>(f<a>, fun(a) b) f<b>
+}
+
+pub extension Applicative<f> {
+  pure: fun<a>(a) f<a>,
+  apply: fun<a, b>(f<fun(a) b>, f<a>) f<b>
+}
+
+pub extension Monad<f> {
+  bind: fun<a, b>(f<a>, fun(a) f<b>) f<b>
+}
