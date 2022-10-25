@@ -1,0 +1,12 @@
+pub extension Show<a> {
+  show: fun(a) str
+}
+
+struct String {
+  valueOf: fun() str
+}
+
+extern String: fun<a>(a) String
+pub impl Show for int {
+  let show = fun(x) return String(x).valueOf()
+}
