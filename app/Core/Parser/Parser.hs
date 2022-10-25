@@ -411,7 +411,7 @@ module Core.Parser.Parser where
   tupleish :: Pure Expression
   tupleish = do
     s <- getPosition
-    (a, b) <- parens $ do
+    (a, b) <- try . parens $ do
       a <- expression
       reservedOp ","
       b <- expression
