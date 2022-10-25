@@ -24,6 +24,14 @@ module Core.TypeChecking.Type.Pretty where
     = bBlue "extern " ++ n ++ ": " ++ show r
   showStmt (Match e cases)
     = bBlue "match " ++ show e ++ " with " ++ intercalate " | " (map show cases)
+  showStmt (For (n, _) e body)
+    = bBlue "for " ++ n ++ " in " ++ show e ++ " " ++ show body
+  showStmt (While e body)
+    = bBlue "while " ++ show e ++ " " ++ show body
+  showStmt Break = bBlue "break"
+  showStmt Continue = bBlue "continue"
+  showStmt (Import n _) = bBlue "import " ++ show n
+  showStmt (Public s) = bBlue "public " ++ show s
 
   instance Show TypedStatement where
     show = showStmt
@@ -33,7 +41,7 @@ module Core.TypeChecking.Type.Pretty where
     = show n ++ "(" ++ intercalate ", " (map show args) ++ ")"
   showExpr (Lambda args body _)
     = "(\\" ++ unwords (map (\(x :@ _) -> x) args) ++ " -> " ++ show body ++ ")"
-  showExpr (Variable n t) = bold n
+  showExpr (Variable n t) = bold n ++ ": " ++ show t
   showExpr (Constructor n _) = bGreen $ bold n
   showExpr (Literal l _) = show l
   showExpr (BinaryOp op e1 e2 _) = show e1 ++ " " ++ op ++ " " ++ show e2

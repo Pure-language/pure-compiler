@@ -15,9 +15,21 @@ module Core.TypeChecking.Unification where
   import Debug.Trace (traceShow)
   import Text.Parsec (SourcePos)
   import Data.Foldable (foldlM)
+  import Core.TypeChecking.Type.AST (TypedStatement)
+  import Core.TypeChecking.Type.Pretty ()
 
   type ReaderEnv = (M.Map String Type, Env)
-  type MonadType m = (MonadRWS ReaderEnv () (Int, Instances) m, MonadIO m, MonadError (String, Maybe String, (SourcePos, SourcePos)) m, MonadFail m)
+  data Module = Module String [TypedStatement]
+    deriving Show
+  data TypeState = TypeState {
+      counter :: Int,
+      instances :: Instances,
+      classEnv :: ClassEnv,
+      modules :: M.Map String Module
+    } deriving Show
+  type Methods = [String]
+  type ClassEnv = M.Map String (Bool, Methods)
+  type MonadType m = (MonadRWS ReaderEnv () TypeState m, MonadIO m, MonadError (String, Maybe String, (SourcePos, SourcePos)) m, MonadFail m)
   
   variable :: Int -> Type -> Either String Substitution
   variable n t
@@ -25,7 +37,8 @@ module Core.TypeChecking.Unification where
     | n `elem` free t = Left $ "Occurs check failed in " ++ show t ++ " with " ++ show (TVar n)
     | otherwise = Right $ M.singleton n t
 
-  align :: (Eq b, Eq a) => [(a, b)] -> [(a, b)] -> [((a, b), (a, b))]
+  -- Creating a array of correspondances between two arrays
+  align :: (Eq b, Eq a, Eq c) => [(a, b)] -> [(a, c)] -> [((a, b), (a, c))]
   align ((x, y):xs) ys = case lookup x ys of
     Nothing -> align xs ys
     Just t -> ((x, y), (x, t)) : align xs (delete (x, t) ys)
@@ -65,7 +78,6 @@ module Core.TypeChecking.Unification where
                   Right s -> compose <$> (acc >>= check s) <*> acc
                   Left s -> Left s) (Right M.empty) $ zip t1 t3
         in compose <$> s1 <*> mgu t2 t4
-  mgu (ListT t) (ListT t') = mgu t t'
   mgu Int Int = Right M.empty
   mgu Bool Bool = Right M.empty
   mgu Char Char = Right M.empty
@@ -75,11 +87,14 @@ module Core.TypeChecking.Unification where
     compose <$> constraintCheck ps1 ps2 <*> mgu t1 t2
   mgu t (_ :=> t2) = mgu t t2
   mgu (_ :=> t) t2 = mgu t t2
-  mgu a@(TApp n xs) b@(TApp n' xs') = if n == n' && length xs == length xs'
-    then foldl (\acc (t, t') -> case mgu t t' of
-                  Right s -> compose <$> (acc >>= check s) <*> acc
-                  Left s -> Left s) (Right M.empty) $ zip xs xs'
-    else Left $ "Type mismatch: " ++ show a ++ " and " ++ show b
+  mgu a@(TApp n xs) b@(TApp n' xs') = 
+    compose <$> mgu n n' <*> mgu xs xs'
+    -- if length xs == length xs'
+    -- then let s = foldl (\acc (t, t') -> case mgu t t' of
+    --               Right s -> compose <$> (acc >>= check s) <*> acc
+    --               Left s -> Left s) (Right M.empty) $ zip xs xs'
+    --       in compose <$> s <*> mgu n n'
+    -- else Left $ "Type mismatch: " ++ show a ++ " and " ++ show b
   mgu t1@(TRec fs1) t2@(TRec fs2) = 
     let f = align fs1 fs2 `union` align fs2 fs1
       in foldM (\s (x, y) -> do

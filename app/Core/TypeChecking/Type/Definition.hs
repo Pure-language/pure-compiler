@@ -7,16 +7,22 @@ module Core.TypeChecking.Type.Definition where
     | [Type] :-> Type
     | [Class] :=> Type
     | Int | Float | Bool | Char | Void
-    | ListT Type | TRec [(String, Type)]
+    | TRec [(String, Type)]
     | TId String
-    | TApp Type [Type]
+    | TApp Type Type
     | RefT Type
     deriving (Eq, Ord)
     
   data Class = IsIn String [Type]
     deriving (Eq, Ord)
   type InstanceName = String
-  type Instance = ([Class], (InstanceName, [Class]))
+  data Instance = ClassInstance {
+    instance' :: [Class],
+    name :: InstanceName,
+    constraints :: [Class],
+    public :: Bool,
+    isDefault :: Bool
+  } deriving (Show, Eq)
   type Instances = [Instance]
 
   data Constructor
@@ -27,7 +33,8 @@ module Core.TypeChecking.Type.Definition where
   type ConsEnv = Map String Scheme
   type Env = (TypeEnv, ConsEnv)
 
-  data Scheme = Forall [Int] Type
+  -- Bool indicates whether the type is public or not
+  data Scheme = Forall Bool [Int] Type
     deriving (Eq, Ord, Show)
 
   instance Show Class where
@@ -36,15 +43,15 @@ module Core.TypeChecking.Type.Definition where
   instance Show Type where
     show (TVar i) = "t" ++ show i
     show (t :-> u) = "fun(" ++ intercalate ", " (map show t) ++ ") -> " ++ show u
-    show (ListT Char) = "str"
     show Int = "int"
     show Void = "void"
     show Float = "float"
     show Bool = "bool"
     show Char = "char"
-    show (ListT t) = "[" ++ show t ++ "]"
+    show (TApp (TId "[]") Char) = "str"
+    show (TApp (TId "[]") t) = "[" ++ show t ++ "]"
     show (TRec fs) = "struct { " ++ intercalate ", " (map (\(n, t) -> n ++ " : " ++ show t) fs) ++ " }"
     show (RefT t) = "ref " ++ show t
     show (TId s) = s
-    show (TApp s args) = show s ++ ("<" ++ intercalate ", " (map show args) ++ ">")
+    show (TApp s args) = show s ++ ("<" ++ show args ++ ">")
     show (cs :=> t) = intercalate ", " (map show cs) ++ " => " ++ show t

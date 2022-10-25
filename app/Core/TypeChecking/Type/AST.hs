@@ -3,7 +3,7 @@ module Core.TypeChecking.Type.AST where
   data TypedStatement
     = Assignment (Annoted String) TypedExpression
     | Modified TypedExpression TypedExpression
-    | If TypedExpression TypedStatement TypedStatement    
+    | If TypedExpression TypedStatement TypedStatement
     | Sequence [TypedStatement]
     | Expression TypedExpression
     | Return TypedExpression
@@ -11,6 +11,11 @@ module Core.TypeChecking.Type.AST where
     | Record (String, Type) [Annoted String]
     | Extern String Type
     | Match TypedExpression [(TypedPattern, TypedStatement)]
+    | For (String, Type) TypedExpression TypedStatement
+    | While TypedExpression TypedStatement
+    | Continue | Break
+    | Public TypedStatement
+    | Import TypedExpression String
     deriving Eq
 
   data TypedPattern
@@ -18,6 +23,7 @@ module Core.TypeChecking.Type.AST where
     | LitP Literal
     | WilP
     | AppP String [TypedPattern]
+    | StructP String [(String, TypedPattern)]
     deriving Eq
 
   data Annoted a = a :@ Type

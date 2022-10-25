@@ -14,10 +14,9 @@ module Core.TypeChecking.Type.Methods where
     free (TVar i) = S.singleton i 
     free (t1 :-> t2) = free t1 `S.union` free t2
     free Int = S.empty
-    free (ListT t) = free t
     free (TRec fs) = S.unions $ map (free . snd) fs
     free (RefT t) = free t
-    free (TApp n xs) = S.unions (map free xs)
+    free (TApp n xs) = free xs
     free (cs :=> t) = free t `S.union` free cs
     free _ = S.empty
 
@@ -25,10 +24,9 @@ module Core.TypeChecking.Type.Methods where
       Just t -> t
       Nothing -> TVar i
     apply s (t1 :-> t2) = apply s t1 :-> apply s t2
-    apply s (ListT t) = ListT $ apply s t
     apply s (TRec fs) = TRec $ map (second $ apply s) fs
     apply s (RefT t) = RefT (apply s t)
-    apply s (TApp n xs) = TApp (apply s n) $ map (apply s) xs
+    apply s (TApp n xs) = TApp (apply s n) $ apply s xs
     apply s (cs :=> t) = apply s cs :=> apply s t
     apply _ s = s
   
@@ -45,8 +43,8 @@ module Core.TypeChecking.Type.Methods where
     apply = M.map . apply
 
   instance Types Scheme where
-    free (Forall v t) = free t S.\\ S.fromList v
-    apply s (Forall v t) = Forall v (apply (foldr M.delete s v) t)
+    free (Forall _ v t) = free t S.\\ S.fromList v
+    apply s (Forall p v t) = Forall p v (apply (foldr M.delete s v) t)
     
   instance Types a => Types (Maybe a) where
     free = maybe S.empty free
@@ -64,6 +62,9 @@ module Core.TypeChecking.Type.Methods where
     apply s (Record n e) = Enum n (apply s e)
     apply s (Extern n r) = Extern n (apply s r)
     apply s (Match e ps) = Match (apply s e) (apply s ps)
+    apply s (For (n, t) e b) = For (n, apply s t) (apply s e) (apply s b)
+    apply s (While c b) = While (apply s c) (apply s b)
+    apply _ x = x
 
   instance Types (Annoted a) where
     free _ = undefined
