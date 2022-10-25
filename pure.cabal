@@ -38,13 +38,12 @@ executable pure
         Core.TypeChecking.Substitution
         Core.TypeChecking.Unification
 
+        Core.ANF
+        Core.Garbage
+
         Core.Conversion.Free
         Core.Conversion.Close
         Core.Conversion.Hoisting
-
-        Core.ANF
-        Core.Monomorphization
-        Core.Isolation
 
         Core.Compiler.Modules.ADT
         Core.Compiler.Modules.Pattern
@@ -69,5 +68,7 @@ executable pure
       , semialign
       , these
       , mtl
+      , filepath
+      , directory
     hs-source-dirs:   app
     default-language: Haskell2010
