@@ -1,0 +1,4 @@
+pub struct Pair<a, b> {
+  fst: a,
+  snd: b
+}
