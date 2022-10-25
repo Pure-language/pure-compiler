@@ -5,10 +5,9 @@ module Core.Parser.AST.Expression where
   data Declaration
     = Id String [String]
     | Arrow [Declaration] [Declaration] Declaration
-    | Array Declaration
     | StructE [(String, Declaration)]
-    | AppE String [Declaration]
-    | StrE | IntE | FloatE | CharE | VoidE
+    | AppE Declaration Declaration
+    | StrE | IntE | FloatE | CharE | VoidE | BoolE
     | Ref Declaration
     deriving (Show, Eq)
 
@@ -22,11 +21,14 @@ module Core.Parser.AST.Expression where
     | Enum String [Declaration] [(String, Maybe [Declaration])]
     | Extern [Declaration] String Declaration
     | Match (Located Expression) [(Located Expression, Located Statement)]
-    | Instance [(String, [String])] String Declaration [(String, Located Expression)]
+    | Instance [(String, [String])] String Declaration [(String, Located Expression)] Bool
     | Class [Declaration] String [(String, Declaration)]
     | Record String [Declaration] [(String, Declaration)]
     | Import [String]
     | Public (Located Statement)
+    | For String (Located Expression) (Located Statement)
+    | While (Located Expression) (Located Statement)
+    | Continue | Break
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration

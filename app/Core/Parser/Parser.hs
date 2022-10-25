@@ -12,16 +12,17 @@ module Core.Parser.Parser where
   import Control.Applicative (Alternative(some))
   import Core.Parser.AST
   import Debug.Trace (traceShow)
-  import Data.Maybe (fromMaybe)
+  import Data.Maybe (fromMaybe, isJust)
+  import Prelude hiding (break)
 
   {- LEXER PART -}
   languageDef =
     emptyDef {  Token.commentStart    = "/*"
               , Token.commentEnd      = "*/"
               , Token.commentLine     = "//"
-              , Token.identStart      = letter
+              , Token.identStart      = letter <|> char '_'
               , Token.identLetter     = alphaNum <|> char '_'
-              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct", "mut"]
+              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct", "mut", "while"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->", "<", ">"] }
 
   lexer :: GenTokenParser String u Identity
@@ -70,6 +71,11 @@ module Core.Parser.Parser where
 
   -- Type parsing --
 
+  buildFun :: [Declaration] -> Declaration -> Declaration
+  buildFun xs t = go (reverse xs) t
+    where go [] t = t
+          go (x:xs) t = AppE (go xs t) x
+
   generics :: Parser [Declaration]
   generics = Token.angles lexer $ commaSep type'
 
@@ -79,25 +85,28 @@ module Core.Parser.Parser where
             [ 
               Postfix $ makeUnaryOp (do
                 args <- Token.angles lexer $ commaSep type'
-                return (\(Id t _) -> AppE t args)) 
+                return (buildFun args)) 
             ]]
 
   typeTerm :: Parser Declaration
   typeTerm =  try (reserved "char" $> CharE)
-       <|> struct <|> ref
+       <|> struct <|> ref <|> tuple
        <|> try (reserved "str" $> StrE)
        <|> try (reserved "int" $> IntE)
        <|> try (reserved "float" $> FloatE)
        <|> try (reserved "void" $> VoidE)
+       <|> try (reserved "bool" $> BoolE)
        <|> arrow <|> generic <|> array
        <|> parens type'
 
-  application :: Parser Declaration
-  application = do
-    try $ do
-      n <- identifier
-      args <- parens $ commaSep type'
-      return $ AppE n args
+  tuple :: Parser Declaration
+  tuple = do
+    (a, b) <- Token.parens lexer $ do
+      a <- type'
+      comma
+      b <- type'
+      return (a, b)
+    return (AppE (AppE (Id "Pair" []) a) b)
 
   struct :: Parser Declaration
   struct = do
@@ -120,14 +129,14 @@ module Core.Parser.Parser where
 
   generic :: Parser Declaration
   generic = do
-    name <- identifier
+    name <- identifier <|> (reserved "[]" $> "[]")
     args <- fromMaybe [] <$> optionMaybe (do
       reservedOp ":"
       sepBy1 identifier (reservedOp "+"))
     return $ Id name args
 
   array :: Parser Declaration
-  array = Array <$> Token.brackets lexer type'
+  array = AppE (Id "[]" []) <$> try (Token.brackets lexer type')
 
   arrow :: Parser Declaration
   arrow = do
@@ -169,6 +178,8 @@ module Core.Parser.Parser where
       extern,
       enum,
       structureStmt,
+      continue,
+      break,
       match <?> "pattern matching",
       modification,
       try stmtExpr,
@@ -177,8 +188,24 @@ module Core.Parser.Parser where
       mutable,
       condition,
       return',
+      for,
+      while,
       block
     ]
+
+  continue :: Pure Statement
+  continue = do
+    s <- getPosition
+    reserved "continue"
+    e <- getPosition
+    return $ Continue :> (s, e)
+  
+  break :: Pure Statement
+  break = do
+    s <- getPosition
+    reserved "break"
+    e <- getPosition
+    return $ Break :> (s, e)
 
   class' :: Pure Statement
   class' = do
@@ -209,6 +236,7 @@ module Core.Parser.Parser where
     name <- identifier
     reserved "for"
     t <- type'
+    isDefault <- isJust <$> optionMaybe (reserved "override")
     reservedOp "{"
     fields <- commaSep $ do
       reserved "let"
@@ -218,7 +246,7 @@ module Core.Parser.Parser where
       return (name, expr)
     reservedOp "}"
     e <- getPosition
-    return $ Instance gen name t fields :> (s, e)
+    return $ Instance gen name t fields isDefault :> (s, e)
 
   extern :: Pure Statement
   extern = do
@@ -301,6 +329,26 @@ module Core.Parser.Parser where
     e <- getPosition
     return (Assignment lhs (Reference rhs :> p) :> (s, e))
 
+  for :: Pure Statement
+  for = do
+    s <- getPosition
+    reserved "for"
+    name <- identifier
+    reserved "in"
+    expr <- expression
+    stmt <- statement
+    e <- getPosition
+    return $ For name expr stmt :> (s, e)
+
+  while :: Pure Statement
+  while = do
+    s <- getPosition
+    reserved "while"
+    cond <- expression
+    stmt <- statement
+    e <- getPosition
+    return $ While cond stmt :> (s, e)
+
   import' :: Pure Statement
   import' = do
     s <- getPosition
@@ -355,9 +403,21 @@ module Core.Parser.Parser where
   term = try float <|> number <|> stringLit <|> charLit <|> list
       <|> (letIn <?> "let expression")
       <|> (function <?> "lambda")
+      <|> (tupleish <?> "tuple")
       <|> (structure <?> "structure")
       <|> (variable <?> "variable")
       <|> (parens expression <?> "expression")
+
+  tupleish :: Pure Expression
+  tupleish = do
+    s <- getPosition
+    (a, b) <- parens $ do
+      a <- expression
+      reservedOp ","
+      b <- expression
+      return (a, b)
+    e <- getPosition
+    return $ Structure "Pair" [("fst", a), ("snd", b)] :> (s, e)
 
   letIn :: Pure Expression
   letIn = do
@@ -471,7 +531,7 @@ module Core.Parser.Parser where
 
   loc :: Located a -> (SourcePos, SourcePos)
   loc (a :> s) = s
-
+  
   table :: [[Operator String () Identity (Located Expression)]]
   table = [
       [Infix (do
