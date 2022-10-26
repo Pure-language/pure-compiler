@@ -19,21 +19,14 @@ module Core.Garbage where
     unless (name == "main") $ modify (name :)
     value' <- runGarbageExpr value
     return $ Assignment (name :@ t) value'
-  runGarbage (Sequence stmts) = do
-    stmts' <- mapM runGarbage stmts
-    env <- get
-    return $ Sequence (filter (\case
-      Assignment (n :@ _) _ -> notElem n env
-      _ -> True) stmts')
   runGarbage (Modified e v) = Modified <$> runGarbageExpr e <*> runGarbageExpr v
-  runGarbage (If cond t f) = If <$> runGarbageExpr cond <*> runGarbage t <*> runGarbage f
+  runGarbage (If cond t f) = If <$> runGarbageExpr cond <*> runGarbageExpr t <*> runGarbageExpr f
   runGarbage (Expression e) = Expression <$> runGarbageExpr e
-  runGarbage (Match e cases) = Match <$> runGarbageExpr e <*> mapM runGarbageCase cases
   runGarbage x = return x
 
-  runGarbageCase :: MonadGarbage m => (TypedPattern, TypedStatement) -> m (TypedPattern, TypedStatement)
+  runGarbageCase :: MonadGarbage m => (TypedPattern, TypedExpression) -> m (TypedPattern, TypedExpression)
   runGarbageCase (p, s) = do
-    s' <- runGarbage s
+    s' <- runGarbageExpr s
     return (p, s')
   
   runGarbageExpr :: MonadGarbage m => TypedExpression -> m TypedExpression
@@ -45,7 +38,7 @@ module Core.Garbage where
     args' <- mapM runGarbageExpr args
     return $ FunctionCall n' args' t
   runGarbageExpr (Lambda args body t) = do
-    body' <- runGarbage body
+    body' <- runGarbageExpr body
     return $ Lambda args body' t
   runGarbageExpr (Constructor name t) = return $ Constructor name t
   runGarbageExpr (BinaryOp op e1 e2 t) = do
@@ -81,4 +74,11 @@ module Core.Garbage where
     = Reference <$> runGarbageExpr name <*> pure t
   runGarbageExpr (Unreference name t)
     = Unreference <$> runGarbageExpr name <*> pure t
+  runGarbageExpr (Sequence stmts) = do
+    stmts' <- mapM runGarbage stmts
+    env <- get
+    return $ Sequence (filter (\case
+      Assignment (n :@ _) _ -> notElem n env
+      _ -> True) stmts')
+  runGarbageExpr (Match e cases) = Match <$> runGarbageExpr e <*> mapM runGarbageCase cases
   runGarbageExpr (Literal l t) = return $ Literal l t

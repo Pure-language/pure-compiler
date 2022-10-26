@@ -8,14 +8,12 @@ module Core.ANF where
   import Control.Monad.RWS (MonadRWS, execRWST, evalRWST, local, MonadReader (ask))
   import Data.Bifunctor (Bifunctor(first, second))
   import Data.List (union, nub)
-  
+
   type Block = TypedStatement
   type MonadANF m = (MonadRWS [(String, String)] () Int m)
 
-  createSequence :: [TypedStatement] -> TypedStatement
-  createSequence x
-    | length x == 1 = head x
-    | otherwise = Sequence x
+  createSequence :: [TypedStatement] -> TypedExpression
+  createSequence = Sequence
 
   freshName :: MonadANF m => m String
   freshName = do
@@ -27,15 +25,10 @@ module Core.ANF where
   convertStmt (Assignment n@(name :@ _) e) = do
     (lets, e') <- local (`union` [(name, name)]) $  convertExpr e
     return (lets, Assignment n e')
-  convertStmt (Sequence xs) = do
-    (lets, xs') <- unzip <$> mapM convertStmt xs
-    let lets' = map createLets lets
-    let xs = concatMap (\(lets, x) -> lets ++ [x]) (zip lets' xs')
-    return ([], createSequence $ xs)
   convertStmt (If e s1 s2) = do
     (lets, e') <- convertExpr e
-    (lets1, s1') <- convertStmt s1
-    (lets2, s2') <- convertStmt s2
+    (lets1, s1') <- convertExpr s1
+    (lets2, s2') <- convertExpr s2
     return (lets ++ lets1 ++ lets2, If e' s1' s2')
   convertStmt (Modified n e) = do
     (lets, e') <- convertExpr e
@@ -46,12 +39,6 @@ module Core.ANF where
   convertStmt (Return e) = do
     (lets, e') <- convertExpr e
     return (lets, Return e')
-  convertStmt (Match e cases) = do
-    (lets1, e') <- convertExpr e
-    (lets2, cases') <- first concat . unzip <$> mapM (\(p, b) -> do
-      (lets, b') <- convertStmt b
-      return (lets, (p, b'))) cases
-    return (lets1 ++ lets2, Match e' cases')
   convertStmt x = return ([], x)
 
   convertExpr :: MonadANF m => TypedExpression -> m ([(Annoted String, TypedExpression)], TypedExpression)
@@ -60,8 +47,13 @@ module Core.ANF where
     (lets2, es') <- first concat . unzip <$> mapM convertExpr es
     return (lets1 ++ lets2, FunctionCall n' es' t)
   convertExpr (Lambda args body t) = do
-    (lets, body') <- convertStmt body
+    (lets, body') <- convertExpr body
     return (lets, Lambda args body' t)
+  convertExpr (Sequence xs) = do
+    (lets, xs') <- unzip <$> mapM convertStmt xs
+    let lets' = map createLets lets
+    let xs = concatMap (\(lets, x) -> lets ++ [x]) (zip lets' xs')
+    return ([], createSequence xs)
   convertExpr (BinaryOp op e1 e2 t) = do
     (lets1, e1') <- convertExpr e1
     (lets2, e2') <- convertExpr e2
@@ -80,7 +72,7 @@ module Core.ANF where
     (lets, fields') <- first concat . unzip <$> mapM (\(x, i) -> do
       (lets, e) <- convertExpr i
       return (lets, (x, e))) fields
-    return (lets, Structure n fields' t) 
+    return (lets, Structure n fields' t)
   convertExpr (Object o f t) = do
     (lets, o') <- convertExpr o
     return (lets, Object o' f t)
@@ -103,8 +95,14 @@ module Core.ANF where
   convertExpr (Variable n t) = ask >>= \env -> case lookup n env of
     Just n' -> return ([], Variable n' t)
     Nothing -> return ([], Variable n t)
+  convertExpr (Match e cases) = do
+    (lets1, e') <- convertExpr e
+    (lets2, cases') <- first concat . unzip <$> mapM (\(p, b) -> do
+      (lets, b') <- convertExpr b
+      return (lets, (p, b'))) cases
+    return (lets1 ++ lets2, Match e' cases')
   convertExpr x = return ([], x)
-  
+
   returnType :: Type -> Type
   returnType (_ :-> t) = t
   returnType _ = error "returnType: not a function"
