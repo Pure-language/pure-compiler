@@ -14,7 +14,8 @@ module Core.Parser.Parser where
   import Debug.Trace (traceShow)
   import Data.Maybe (fromMaybe, isJust)
   import Prelude hiding (break)
-
+  import Control.Monad (guard)
+  
   {- LEXER PART -}
   languageDef =
     emptyDef {  Token.commentStart    = "/*"
@@ -23,7 +24,11 @@ module Core.Parser.Parser where
               , Token.identStart      = letter <|> char '_'
               , Token.identLetter     = alphaNum <|> char '_'
               , Token.reservedNames   = ["let", "=", "fun", "if", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct", "mut", "while"]
-              , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->", "<", ">"] }
+              , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "<", ">"] }
+  
+  operators :: Parser String
+  operators = do
+    try $ (some (oneOf "+-*/$=") <|> (Token.angles lexer operators >>= \op -> return ("<" ++ op ++ ">"))) >>= \res -> guard (res /= "=") >> return res
 
   lexer :: GenTokenParser String u Identity
   lexer = Token.makeTokenParser languageDef
@@ -82,10 +87,10 @@ module Core.Parser.Parser where
   type' :: Parser Declaration
   type' = buildExpressionParser table typeTerm
     where table = [
-            [ 
+            [
               Postfix $ makeUnaryOp (do
                 args <- Token.angles lexer $ commaSep type'
-                return (buildFun args)) 
+                return (buildFun args))
             ]]
 
   typeTerm :: Parser Declaration
@@ -122,7 +127,7 @@ module Core.Parser.Parser where
 
   field :: Parser (String, Declaration)
   field = do
-    name <- identifier
+    name <- identifier <|> parens operators
     reservedOp ":"
     type' <- type'
     return (name, type')
@@ -169,7 +174,7 @@ module Core.Parser.Parser where
   public :: Pure Statement
   public = do
     s <- getPosition
-    reserved "pub" 
+    reserved "pub"
     e <- getPosition
     (:> (s, e)) . Public <$> topLevel
 
@@ -197,7 +202,7 @@ module Core.Parser.Parser where
     reserved "continue"
     e <- getPosition
     return $ Continue :> (s, e)
-  
+
   break :: Pure Statement
   break = do
     s <- getPosition
@@ -238,7 +243,7 @@ module Core.Parser.Parser where
     reservedOp "{"
     fields <- commaSep $ do
       reserved "let"
-      name <- identifier
+      name <- identifier <|> parens operators
       reservedOp "="
       expr <- expression
       return (name, expr)
@@ -452,7 +457,7 @@ module Core.Parser.Parser where
   case' :: Parser (Located Expression, Located Expression)
   case' = do
     expr <- expression
-    reserved "->"
+    reserved "="
     stmt <- expression
     return (expr, stmt)
 
@@ -511,7 +516,7 @@ module Core.Parser.Parser where
   annoted :: Pure (Annoted String)
   annoted = do
     s <- getPosition
-    v <- identifier
+    v <- identifier <|> parens operators
     ty <- optionMaybe $ reserved ":" *> type'
     s2 <- getPosition
     return ((v :@ ty) :> (s, s2))
@@ -540,7 +545,7 @@ module Core.Parser.Parser where
 
   loc :: Located a -> (SourcePos, SourcePos)
   loc (a :> s) = s
-  
+
   table :: [[Operator String () Identity (Located Expression)]]
   table = [
       [Infix (do
@@ -562,7 +567,8 @@ module Core.Parser.Parser where
       [Infix (reservedOp "*" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "*" x y :> (s, e))) AssocLeft,
        Infix (reservedOp "/" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "/" x y :> (s, e))) AssocLeft],
       [Infix (reservedOp "+" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "+" x y :> (s, e))) AssocLeft,
-       Infix (reservedOp "-" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "-" x y :> (s, e))) AssocLeft]
+       Infix (reservedOp "-" >> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> BinaryOp "-" x y :> (s, e))) AssocLeft],
+      [Infix (operators >>= \op -> return (\x@(_ :> (s, _)) y@(_ :> (_, e)) -> FunctionCall (Variable op [] :> (s, e)) [x, y] :> (s, e))) AssocLeft]
     ]
     where postfix = call <|> object <|> index
           call = do
