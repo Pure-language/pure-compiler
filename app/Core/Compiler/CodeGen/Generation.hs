@@ -3,6 +3,23 @@ module Core.Compiler.CodeGen.Generation where
   import Core.TypeChecking.Type.AST (Literal(..))
   import Data.List (intercalate)
 
+  isStatement :: IR -> Bool
+  isStatement (IRDeclaration _ _) = True
+  isStatement (IRModification _ _) = True
+  isStatement (IRSequence _) = True
+  isStatement (IRReturn _) = True
+  isStatement (IRIf _ _) = True
+  isStatement IRFor {} = True
+  isStatement (IRWhile _ _) = True
+  isStatement IRContinue = True
+  isStatement IRBreak = True
+  isStatement IRIfElse {} = True
+  isStatement (IRExport _) = True
+  isStatement (IRImport _ _) = True
+  isStatement (IRThrow _) = True
+  isStatement (IRAwait _) = True
+  isStatement _ = False
+
   from :: IR -> String
   from (IRSequence asts) = "{" ++ concatMap ((++";") .from) asts ++ "}"
   from (IRDeclaration n v) = "const " ++ n ++ " = " ++ from v ++ ";"
@@ -37,3 +54,4 @@ module Core.Compiler.CodeGen.Generation where
   from (IRExport e) = "export " ++ from e ++ ";"
   from (IRAwait e) = "await " ++ from e
   from (IRIn e1 e2) = from e1 ++ " in " ++ from e2
+  from (IRThrow e) = "throw " ++ from e

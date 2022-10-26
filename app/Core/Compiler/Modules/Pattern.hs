@@ -35,7 +35,7 @@ module Core.Compiler.Modules.Pattern where
     \x b -> getConstructor n >>= \case
       Just _ -> return $
         let cond = IRBinCall (IRStructProp x "type") "===" (IRLit $ S n)
-          in IRIf cond b
+          in IRIf cond (IRReturn b)
       Nothing -> return $ IRSequence [IRDeclaration (varify n) x, IRReturn b]
   compileCase (AppP n args) = do
     let args' x = concat <$> zipWithM (\arg v -> do
@@ -51,7 +51,7 @@ module Core.Compiler.Modules.Pattern where
                     _ -> cond
         in return $ IRIf conds $ IRSequence $ lets ++ [IRReturn b]
   compileCase WilP = do
-    \x b -> return b
+    \x b -> return (IRReturn b)
   compileCase (LitP l) = do
     \x b -> return $
       let cond = IRBinCall x "===" (IRLit l)

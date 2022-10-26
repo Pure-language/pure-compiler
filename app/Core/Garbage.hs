@@ -48,6 +48,9 @@ module Core.Garbage where
   runGarbageExpr (UnaryOp op e t) = do
     e' <- runGarbageExpr e
     return $ UnaryOp op e' t
+  runGarbageExpr (Throw e t) = do
+    e' <- runGarbageExpr e
+    return $ Throw e' t
   runGarbageExpr (List e t) = do
     e' <- mapM runGarbageExpr e
     return $ List e' t

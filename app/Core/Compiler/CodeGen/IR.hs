@@ -30,6 +30,7 @@ module Core.Compiler.CodeGen.IR where
     | IRStructProp IR String
     | IRLit Literal
     | IRIn IR IR
+    | IRThrow IR
     | IRAwait IR
     deriving Show
 

@@ -5,7 +5,7 @@ module Core.Compiler.Compiler where
   import Data.List (intercalate, union, (\\))
   import Core.TypeChecking.Type.Definition
   import Core.TypeChecking.Type.AST
-  import Core.Compiler.CodeGen (IR(..), varify)
+  import Core.Compiler.CodeGen (IR(..), varify, isStatement)
   import Control.Monad.RWS (gets, modify)
   import Control.Monad.State (StateT(runStateT), evalStateT)
   import Core.Compiler.Modules.ADT (compileData)
@@ -73,6 +73,9 @@ module Core.Compiler.Compiler where
   compileStatement Continue = return [IRContinue]
   compileStatement x = error $ "Not implemented: " ++ show x
 
+  embed :: IR -> IR
+  embed x = IRCall (IRLambda [] x) []
+
   compileExpression :: MonadCompiler m => TypedExpression -> m IR
   compileExpression (Variable "void" _) = return (IRVariable "null")
   compileExpression (Variable name t) = return $ IRVariable (varify name)
@@ -87,7 +90,7 @@ module Core.Compiler.Compiler where
     xs <- mapM (\(p, b) -> do
       b <- compileExpression b
       compileCase p x b) pats
-    return $ IRCall (IRLambda [] $ IRSequence $ if length xs == 1 then [head xs] else [createIfSequence xs]) []
+    return $ embed $ IRSequence $ if length xs == 1 then [head xs] else [createIfSequence xs]
   compileExpression (Constructor c t) = do
     getConstructor (varify c) >>= \case
       Just obj -> return $ IRStructProp (IRVariable obj) (varify c)
@@ -98,12 +101,15 @@ module Core.Compiler.Compiler where
   compileExpression (Object obj f t) = do
     obj' <- compileExpression obj
     return $ IRStructProp obj' f
+  compileExpression (Throw e _) = do
+    e' <- compileExpression e
+    return $ embed $ IRSequence [IRThrow e']
   compileExpression (Literal i t) = return $ IRLit i
   compileExpression (Sequence stmts) = do
     stmts' <- concat <$> mapM compileStatement stmts
     let stmts'' = case last stmts' of 
           IRReturn x -> IRSequence stmts'
-          x -> IRSequence $ init stmts' ++ [IRReturn x]
+          x -> IRSequence $ init stmts' ++ [if isStatement x then x else IRReturn x]
     return $ IRCall (IRLambda [] stmts'') []
   compileExpression (Lambda args body t) = do
     let args' = map (\(n :@ _) -> varify n) args

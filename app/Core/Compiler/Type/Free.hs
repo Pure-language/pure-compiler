@@ -35,6 +35,7 @@ module Core.Compiler.Type.Free where
     free (Reference c t) = free c
     free (Unreference c t) = free c
     free (Constructor _ t) =[]
+    free (Throw e t) = free e
 
   instance Free TypedPattern where
     free (VarP x _) = [x]
