@@ -400,6 +400,7 @@ module Core.Parser.Parser where
   term :: Pure Expression
   term = try float <|> number <|> stringLit <|> charLit <|> list
       <|> (match <?> "pattern matching")
+      <|> (throw <?> "expression catcher")
       <|> (block <?> "sequence")
       <|> (letIn <?> "let expression")
       <|> (function <?> "lambda")
@@ -407,6 +408,14 @@ module Core.Parser.Parser where
       <|> (structure <?> "structure")
       <|> (variable <?> "variable")
       <|> (parens expression <?> "expression")
+
+  throw :: Pure Expression
+  throw = do
+    s <- getPosition
+    reserved "throw"
+    e <- expression
+    e2 <- getPosition
+    return (Throw e :> (s, e2))
 
   tupleish :: Pure Expression
   tupleish = do

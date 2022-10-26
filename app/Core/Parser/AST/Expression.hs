@@ -34,6 +34,7 @@ module Core.Parser.AST.Expression where
 
   data Expression
     = FunctionCall (Located Expression) [Located Expression]
+    | Throw (Located Expression)
     | Lambda [Declaration] [Annoted String] (Located Expression)
     | Sequence [Located Statement]
     | Variable String [Declaration]
