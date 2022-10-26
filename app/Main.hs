@@ -14,8 +14,6 @@ module Main where
   import Core.Compiler.CodeGen.Generation (from)
   import Data.Bifunctor (Bifunctor(bimap))
   import Core.Garbage (runGarbageMonad)
-  import Core.Conversion.Hoisting (runHoisting)
-  import Core.Conversion.Close (runClosureConversion)
   import Core.TypeChecking.Unification (TypeState(modules), Module (Module))
   import qualified Data.Map as M
   import Control.Arrow (Arrow(second))
