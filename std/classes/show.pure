@@ -8,5 +8,5 @@ struct String {
 
 extern String: fun<a>(a) String
 pub impl Show for int {
-  let show = fun(x) return String(x).valueOf()
+  let show = fun(x) String(x).valueOf()
 }
