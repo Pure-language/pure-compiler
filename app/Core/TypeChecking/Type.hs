@@ -637,8 +637,10 @@ module Core.TypeChecking.Type where
         t' <- tyInstantiate (applyForall s t)
         return (t', M.empty, (M.empty, M.empty), A.Variable name t')
       Nothing -> case M.lookup name cons of
-        Just t -> do
-          t' <- tyInstantiate t
+        Just t@(Forall b tvs _) -> do
+          cast' <- mapM (`createType` map') cast
+          let s = M.fromList $ zip tvs cast'
+          t' <- tyInstantiate (applyForall s t)
           return (t', M.empty, (M.empty, M.empty), A.Constructor name t')
         Nothing -> throwError (
           "Variable " ++ name ++ " is not defined",
@@ -946,6 +948,25 @@ module Core.TypeChecking.Type where
   tyPattern (Literal (I (i :> _)) :> _) = return (A.LitP (A.I i), M.empty, Int, M.empty)
   tyPattern (Literal (F (f :> _)) :> _) = return (A.LitP (A.F f), M.empty, Float, M.empty)
   tyPattern (Literal (C (c :> _)) :> _) = return (A.LitP (A.C c), M.empty, Char, M.empty)
+  tyPattern (List [] :> pos) = do
+    t <- fresh
+    return (A.EmptyListP, M.empty, TApp (TId "[]") t, M.empty)
+  tyPattern (Unreference (Variable n cast :> _) :> _) = ask >>= \(_, (_, c)) -> case M.lookup n c of
+    Just t -> do
+      t' <- tyInstantiate t
+      return (A.VarP n t', M.empty, t', M.empty)
+    Nothing -> do
+      t <- fresh
+      return (A.SpreadP n t, M.empty, t, M.singleton n (Forall False [] $ TApp (TId "[]") t))
+  tyPattern (List xs :> pos) = do
+    tv <- fresh
+    (_, (_, c)) <- ask
+    (x', s, t, m) <- foldlM (\(x', s, t, m) x -> do
+      (x'', s', t', m') <- local (B.second (apply s)) $ tyPattern x
+      case mgu c t' tv of
+        Right s'' -> return (apply s'' $ x' ++ [x''], s'' `compose` s' `compose` s, t ++ [t'], apply s'' m' `M.union` m)
+        Left err -> throwError (err, Nothing, pos)) ([], M.empty, [], M.empty) xs
+    return (apply s $ A.ListP x', s, TApp (TId "[]") (apply s tv), m)
   tyPattern x = error $ "tyPattern: not implemented => " ++ show x
 
   tyLiteral :: MonadType m => Literal -> m Type

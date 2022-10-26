@@ -22,6 +22,7 @@ module Core.TypeChecking.Type.AST where
     | WilP
     | AppP String [TypedPattern]
     | StructP String [(String, TypedPattern)]
+    | EmptyListP | ListP [TypedPattern] | SpreadP String Type
     deriving Eq
 
   data Annoted a = a :@ Type

@@ -97,6 +97,9 @@ module Core.TypeChecking.Type.Methods where
     free _ = undefined
     apply s (AppP n xs) = AppP n (apply s xs)
     apply s (VarP v t) = VarP v (apply s t)
+    apply s (SpreadP v t) = SpreadP v (apply s t)
+    apply s (ListP xs) = ListP (apply s xs)
+    apply s (StructP n fs) = StructP n (map (second $ apply s) fs)
     apply _ s = s
 
   applyEnv :: Types a => Substitution -> (a, b) -> (a, b)
