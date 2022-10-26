@@ -14,20 +14,18 @@ module Core.Parser.AST.Expression where
   data Statement
     = Assignment (Annoted String) (Located Expression)
     | Modified (Located Expression) (Located Expression)
-    | If (Located Expression) (Located Statement) (Located Statement)
-    | Sequence [Located Statement]
+    | If (Located Expression) (Located Expression) (Located Expression)
     | Expression Expression
     | Return (Located Expression)
     | Enum String [Declaration] [(String, Maybe [Declaration])]
     | Extern [Declaration] String Declaration
-    | Match (Located Expression) [(Located Expression, Located Statement)]
     | Instance [(String, [String])] String Declaration [(String, Located Expression)] Bool
     | Class [Declaration] String [(String, Declaration)]
     | Record String [Declaration] [(String, Declaration)]
     | Import [String]
     | Public (Located Statement)
-    | For String (Located Expression) (Located Statement)
-    | While (Located Expression) (Located Statement)
+    | For String (Located Expression) (Located Expression)
+    | While (Located Expression) (Located Expression)
     | Continue | Break
     deriving (Show, Eq)
 
@@ -36,13 +34,15 @@ module Core.Parser.AST.Expression where
 
   data Expression
     = FunctionCall (Located Expression) [Located Expression]
-    | Lambda [Declaration] [Annoted String] (Located Statement)
+    | Lambda [Declaration] [Annoted String] (Located Expression)
+    | Sequence [Located Statement]
     | Variable String [Declaration]
     | Literal Literal
     | BinaryOp String (Located Expression) (Located Expression)
     | UnaryOp String (Located Expression)
     | List [Located Expression]
     | Index (Located Expression) (Located Expression)
+    | Match (Located Expression) [(Located Expression, Located Expression)]
     | LetIn (Annoted String) (Located Expression) (Located Expression)
     | Structure String [(String, Located Expression)]
     | Object (Located Expression) String

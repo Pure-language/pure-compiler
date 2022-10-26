@@ -22,7 +22,7 @@ module Core.Parser.Parser where
               , Token.commentLine     = "//"
               , Token.identStart      = letter <|> char '_'
               , Token.identLetter     = alphaNum <|> char '_'
-              , Token.reservedNames   = ["let", "=", "fun", "if", "then", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct", "mut", "while"]
+              , Token.reservedNames   = ["let", "=", "fun", "if", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct", "mut", "while"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "->", "<", ">"] }
 
   lexer :: GenTokenParser String u Identity
@@ -180,7 +180,6 @@ module Core.Parser.Parser where
       structureStmt,
       continue,
       break,
-      match <?> "pattern matching",
       modification,
       try stmtExpr,
       functionStmt,
@@ -189,8 +188,7 @@ module Core.Parser.Parser where
       condition,
       return',
       for,
-      while,
-      block
+      while
     ]
 
   continue :: Pure Statement
@@ -290,9 +288,9 @@ module Core.Parser.Parser where
     s <- getPosition
     reserved "if"
     cond <- expression <?> "condition"
-    stmt <- statement <?> "then statement"
+    stmt <- expression <?> "then statement"
     reserved "else"
-    stmt2 <- statement <?> "else statement"
+    stmt2 <- expression <?> "else statement"
     s2 <- getPosition
     return $ If cond stmt stmt2 :> (s, s2)
 
@@ -336,7 +334,7 @@ module Core.Parser.Parser where
     name <- identifier
     reserved "in"
     expr <- expression
-    stmt <- statement
+    stmt <- expression
     e <- getPosition
     return $ For name expr stmt :> (s, e)
 
@@ -345,7 +343,7 @@ module Core.Parser.Parser where
     s <- getPosition
     reserved "while"
     cond <- expression
-    stmt <- statement
+    stmt <- expression
     e <- getPosition
     return $ While cond stmt :> (s, e)
 
@@ -357,7 +355,7 @@ module Core.Parser.Parser where
     e <- getPosition
     return $ Import m:> (s, e)
 
-  block :: Pure Statement
+  block :: Pure Expression
   block = do
     (_ :> s) <- locate $ reserved "{"
     stmts <- many (statement <* optionMaybe (reserved ";")) <?> "statement"
@@ -401,6 +399,8 @@ module Core.Parser.Parser where
 
   term :: Pure Expression
   term = try float <|> number <|> stringLit <|> charLit <|> list
+      <|> (match <?> "pattern matching")
+      <|> (block <?> "sequence")
       <|> (letIn <?> "let expression")
       <|> (function <?> "lambda")
       <|> (tupleish <?> "tuple")
@@ -431,7 +431,7 @@ module Core.Parser.Parser where
     e <- getPosition
     return $ LetIn lhs rhs body :> (s, e)
 
-  match :: Pure Statement
+  match :: Pure Expression
   match = do
     s <- getPosition
     reserved "match"
@@ -440,11 +440,11 @@ module Core.Parser.Parser where
     e <- getPosition
     return $ Match expr cases :> (s, e)
 
-  case' :: Parser (Located Expression, Located Statement)
+  case' :: Parser (Located Expression, Located Expression)
   case' = do
     expr <- expression
     reserved "->"
-    stmt <- statement
+    stmt <- expression
     return (expr, stmt)
 
   float :: Pure Expression
@@ -522,7 +522,7 @@ module Core.Parser.Parser where
     annot <- fromMaybe [] <$> optionMaybe generics
     args <- parens $ commaSep annoted
     let args' = map (\(a :> _) -> a) args
-    body <- statement <?> "function body"
+    body <- expression <?> "function body"
     s2 <- getPosition
     return (Lambda annot args' body :> (s, s2))
 
