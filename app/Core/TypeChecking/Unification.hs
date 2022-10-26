@@ -4,7 +4,7 @@ module Core.TypeChecking.Unification where
   import Control.Monad.RWS
   import Control.Monad.Except
   import Core.TypeChecking.Substitution (Substitution, Types (free, apply))
-  import Core.TypeChecking.Type.Definition (Type(..), Class (IsIn), Env, Instances)
+  import Core.TypeChecking.Type.Definition (Type(..), Class (IsIn), Env, Instances, ConsEnv, Scheme (Forall))
   import qualified Data.Map as M
   import Core.TypeChecking.Type.Methods (compose)
   import Data.These (These(..))
@@ -44,61 +44,75 @@ module Core.TypeChecking.Unification where
     Just t -> ((x, y), (x, t)) : align xs (delete (x, t) ys)
   align [] _ = []
 
-  check :: Substitution  -> Substitution  -> Either String Substitution 
-  check s1 s2 = foldl compose M.empty <$> m
+  check :: ConsEnv -> Substitution  -> Substitution  -> Either String Substitution 
+  check e s1 s2 = foldl compose M.empty <$> m
     where m = sequence $ ialignWith (\i -> \case
                 This a -> Right (M.singleton i (apply s1 a))
                 That b -> Right (M.singleton i (apply s2 b))
-                These a b -> mgu (apply s1 a) (apply s2 b)) s1 s2
+                These a b -> mgu e (apply s1 a) (apply s2 b)) s1 s2
 
-  constraintCheck :: [Class] -> [Class] -> Either String Substitution
-  constraintCheck cs1 cs2 = foldl compose M.empty <$> m
+  constraintCheck :: ConsEnv -> [Class] -> [Class] -> Either String Substitution
+  constraintCheck e cs1 cs2 = foldl compose M.empty <$> m
     where m = sequence $ alignWith (\case
                 That a -> Right M.empty
                 This b -> Right M.empty
-                These a b -> mguClass a b) cs1 cs2
+                These a b -> mguClass e a b) cs1 cs2
 
-  mguClass :: Class -> Class -> Either String Substitution  
-  mguClass (IsIn c t) (IsIn c' t')
-    | c == c' = mguList t t'
+  mguClass :: ConsEnv -> Class -> Class -> Either String Substitution  
+  mguClass e (IsIn c t) (IsIn c' t')
+    | c == c' = mguList e t t'
     | otherwise = Left $ "Classes " ++ show c ++ " and " ++ show c' ++ " do not match"
 
-  mguList :: [Type] -> [Type] -> Either String Substitution
-  mguList t1 t2 = foldl (\acc (t, t') -> case mgu t t' of
-    Right s -> compose <$> (acc >>= check s) <*> pure s
+  mguList :: ConsEnv -> [Type] -> [Type] -> Either String Substitution
+  mguList e t1 t2 = foldl (\acc (t, t') -> case mgu e t t' of
+    Right s -> compose <$> (acc >>= check e s) <*> pure s
     Left s -> Left s) (Right M.empty) $ zip t1 t2
 
-  mgu :: Type -> Type -> Either String Substitution
-  mgu (TVar i) t = variable i t
-  mgu t (TVar i) = variable i t
-  mgu a@(t1 :-> t2) b@(t3 :-> t4)
+  mgu :: ConsEnv -> Type -> Type -> Either String Substitution
+  mgu e (TVar i) t = variable i t
+  mgu e t (TVar i) = variable i t
+  mgu e a@(t1 :-> t2) b@(t3 :-> t4)
     = if length t1 /= length t3
         then Left $ show a ++ " has " ++ show (length t1) ++ " arguments whereas " ++ show b ++ " has " ++ show (length t3) ++ " arguments"
-        else let s1 = foldl (\acc (t, t') -> case mgu t t' of
-                  Right s -> compose <$> (acc >>= check s) <*> acc
+        else let s1 = foldl (\acc (t, t') -> case mgu e t t' of
+                  Right s -> compose <$> (acc >>= check e s) <*> acc
                   Left s -> Left s) (Right M.empty) $ zip t1 t3
-        in compose <$> s1 <*> mgu t2 t4
-  mgu Int Int = Right M.empty
-  mgu Bool Bool = Right M.empty
-  mgu Char Char = Right M.empty
-  mgu (RefT t) (RefT t') = mgu t t'
-  mgu Void Void = Right M.empty
-  mgu (ps1 :=> t1) (ps2 :=> t2) = 
-    compose <$> constraintCheck ps1 ps2 <*> mgu t1 t2
-  mgu t (_ :=> t2) = mgu t t2
-  mgu (_ :=> t) t2 = mgu t t2
-  mgu a@(TApp n xs) b@(TApp n' xs') = 
-    compose <$> mgu n n' <*> mgu xs xs'
+        in compose <$> s1 <*> mgu e t2 t4
+  mgu e Int Int = Right M.empty
+  mgu e Bool Bool = Right M.empty
+  mgu e Char Char = Right M.empty
+  mgu e (RefT t) (RefT t') = mgu e t t'
+  mgu e Void Void = Right M.empty
+  mgu e (TId n) (TRec fs) = case M.lookup n e of
+    Nothing -> Left $ "Type " ++ show n ++ " is not defined"
+    Just (Forall _ _ ([TRec fs'] :-> _)) ->
+      if length (align fs fs') == length fs && length (align fs fs') == length fs'
+        then Right M.empty
+        else Left $ "Record " ++ show n ++ " does not match " ++ show (TRec fs')
+    Just _ -> Left $ "Type " ++ show n ++ " is not a record"
+  mgu e (TRec fs) (TId n) = case M.lookup n e of
+    Nothing -> Left $ "Type " ++ show n ++ " is not defined"
+    Just (Forall _ _ ([TRec fs'] :-> _)) ->
+      if length (align fs fs') == length fs && length (align fs fs') == length fs'
+        then Right M.empty
+        else Left $ "Record " ++ show n ++ " does not match " ++ show (TRec fs')
+    Just _ -> Left $ "Type " ++ show n ++ " is not a record"
+  mgu e (ps1 :=> t1) (ps2 :=> t2) = 
+    compose <$> constraintCheck e ps1 ps2 <*> mgu e t1 t2
+  mgu e t (_ :=> t2) = mgu e t t2
+  mgu e (_ :=> t) t2 = mgu e t t2
+  mgu e a@(TApp n xs) b@(TApp n' xs') = 
+    compose <$> mgu e n n' <*> mgu e xs xs'
     -- if length xs == length xs'
     -- then let s = foldl (\acc (t, t') -> case mgu t t' of
     --               Right s -> compose <$> (acc >>= check s) <*> acc
     --               Left s -> Left s) (Right M.empty) $ zip xs xs'
     --       in compose <$> s <*> mgu n n'
     -- else Left $ "Type mismatch: " ++ show a ++ " and " ++ show b
-  mgu t1@(TRec fs1) t2@(TRec fs2) = 
+  mgu e t1@(TRec fs1) t2@(TRec fs2) = 
     let f = align fs1 fs2 `union` align fs2 fs1
       in foldM (\s (x, y) -> do
-        s' <- mgu (snd x) (snd y)
+        s' <- mgu e (snd x) (snd y)
         return $ compose s s') M.empty f
-  mgu (TId n) (TId n') = if n == n' then Right M.empty else Left $ "Type mismatch: " ++ show n ++ " and " ++ show n'
-  mgu s1 s2 = Left $ "Type " ++ show s1 ++ " mismatches with type " ++ show s2
+  mgu e (TId n) (TId n') = if n == n' then Right M.empty else Left $ "Type mismatch: " ++ show n ++ " and " ++ show n'
+  mgu _ s1 s2 = Left $ "Type " ++ show s1 ++ " mismatches with type " ++ show s2

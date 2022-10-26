@@ -11,8 +11,6 @@ module Core.TypeChecking.Type.Pretty where
     = show n ++ " = " ++ show e
   showStmt (If e s1 s2)
     = bBlue "if " ++ show e ++ " then " ++ show s1 ++ " else " ++ show s2
-  showStmt (Sequence exprs)
-    = "{ " ++ intercalate "; " (map show exprs) ++ " }"
   showStmt (Return e)
     = bBlue "return " ++ show e
   showStmt (Enum (n, _) fields) 
@@ -22,8 +20,6 @@ module Core.TypeChecking.Type.Pretty where
     = bBlue "struct " ++ n ++ " { " ++ intercalate ", " (map (\(x :@ t) -> x ++ ": " ++ show t) fields) ++ "}"
   showStmt (Extern n r)
     = bBlue "extern " ++ n ++ ": " ++ show r
-  showStmt (Match e cases)
-    = bBlue "match " ++ show e ++ " with " ++ intercalate " | " (map show cases)
   showStmt (For (n, _) e body)
     = bBlue "for " ++ n ++ " in " ++ show e ++ " " ++ show body
   showStmt (While e body)
@@ -48,6 +44,10 @@ module Core.TypeChecking.Type.Pretty where
   showExpr (UnaryOp op e _) = op ++ show e
   showExpr (List exprs _)
     = "[" ++ intercalate ", " (map show exprs) ++ "]"
+  showExpr (Match e cases)
+    = bBlue "match " ++ show e ++ " with " ++ intercalate " | " (map show cases)
+  showExpr (Sequence exprs)
+    = "{ " ++ intercalate "; " (map show exprs) ++ " }"
   showExpr (Index e i _)
     = show e ++ "[" ++ show i ++ "]"
   showExpr (Structure n fields _)

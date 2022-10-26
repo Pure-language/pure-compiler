@@ -55,13 +55,11 @@ module Core.TypeChecking.Type.Methods where
     apply s (Assignment v e) = Assignment (apply s v) (apply s e)
     apply s (Modified n e) = Modified (apply s n) (apply s e)
     apply s (If c t e) = If (apply s c) (apply s t) (apply s e)
-    apply s (Sequence ss) = Sequence (apply s ss)
     apply s (Expression e) = Expression (apply s e)
     apply s (Return e) = Return (apply s e)
     apply s (Enum n e) = Enum n (apply s e)
     apply s (Record n e) = Enum n (apply s e)
     apply s (Extern n r) = Extern n (apply s r)
-    apply s (Match e ps) = Match (apply s e) (apply s ps)
     apply s (For (n, t) e b) = For (n, apply s t) (apply s e) (apply s b)
     apply s (While c b) = While (apply s c) (apply s b)
     apply _ x = x
@@ -91,6 +89,8 @@ module Core.TypeChecking.Type.Methods where
     apply s (Constructor n t) = Constructor n (apply s t)
     apply s (Unreference e t) = Unreference (apply s e) (apply s t)
     apply s (LetIn v e b t) = LetIn (apply s v) (apply s e) (apply s b) (apply s t)
+    apply s (Match e ps) = Match (apply s e) (apply s ps)
+    apply s (Sequence ss) = Sequence (apply s ss)
 
   instance Types TypedPattern where
     free _ = undefined

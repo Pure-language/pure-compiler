@@ -3,16 +3,14 @@ module Core.TypeChecking.Type.AST where
   data TypedStatement
     = Assignment (Annoted String) TypedExpression
     | Modified TypedExpression TypedExpression
-    | If TypedExpression TypedStatement TypedStatement
-    | Sequence [TypedStatement]
+    | If TypedExpression TypedExpression TypedExpression
     | Expression TypedExpression
     | Return TypedExpression
     | Enum (String, Type) [Annoted String]
     | Record (String, Type) [Annoted String]
     | Extern String Type
-    | Match TypedExpression [(TypedPattern, TypedStatement)]
-    | For (String, Type) TypedExpression TypedStatement
-    | While TypedExpression TypedStatement
+    | For (String, Type) TypedExpression TypedExpression
+    | While TypedExpression TypedExpression
     | Continue | Break
     | Public TypedStatement
     | Import TypedExpression String
@@ -31,8 +29,10 @@ module Core.TypeChecking.Type.AST where
 
   data TypedExpression
     = FunctionCall TypedExpression [TypedExpression] Type
-    | Lambda [Annoted String] TypedStatement Type    
+    | Lambda [Annoted String] TypedExpression Type    
     | Variable String Type
+    | Sequence [TypedStatement]
+    | Match TypedExpression [(TypedPattern, TypedExpression)]
     | Constructor String Type
     | Literal Literal Type
     | BinaryOp String TypedExpression TypedExpression Type
