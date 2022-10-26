@@ -16,7 +16,7 @@ module Core.Compiler.Modules.ADT where
                   let args' = zipWith const (["v" ++ show i | i <- [0..]]) args
                   let fields = map (\x -> (x, IRVariable x)) args'
                   let fields' = IRLamStruct (("type", IRLit (S n')) : fields)
-                  return (varify n', IRLambda args' (IRReturn fields'))
+                  return (varify n', IRLambda args' fields')
                 _ -> return (varify n', IRLamStruct [("type", IRLit (S n'))])) cons
     return $ IRDeclaration (varify n) (IRLamStruct cons')
   compileData _ = error "compileData: not a data"

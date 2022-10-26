@@ -30,13 +30,13 @@ module Core.Compiler.Modules.Pattern where
       let args'' = concatMap (\(x, f) -> f (IRStructProp e x)) args'
       concatMap (\(x, y) -> [(Nothing, Just $ IRIn (IRLit (S x)) e)]) args ++ args''
 
-  compileCase :: MonadCompiler m => TypedPattern -> IR -> [IR] -> m IR
+  compileCase :: MonadCompiler m => TypedPattern -> IR -> IR -> m IR
   compileCase (VarP n t) = do
     \x b -> getConstructor n >>= \case
       Just _ -> return $
         let cond = IRBinCall (IRStructProp x "type") "===" (IRLit $ S n)
-          in IRIf cond $ IRSequence b
-      Nothing -> return $ IRSequence [IRDeclaration (varify n) x, IRSequence b]
+          in IRIf cond b
+      Nothing -> return $ IRSequence [IRDeclaration (varify n) x, IRReturn b]
   compileCase (AppP n args) = do
     let args' x = concat <$> zipWithM (\arg v -> do
               f <- findPattern arg
@@ -49,13 +49,13 @@ module Core.Compiler.Modules.Pattern where
           conds = case cs of
                     (c:cs) -> cond `and` foldl and c cs
                     _ -> cond
-        in return $ IRIf conds $ IRSequence $ lets ++ b
+        in return $ IRIf conds $ IRSequence $ lets ++ [IRReturn b]
   compileCase WilP = do
-    \x b -> return $ IRSequence b
+    \x b -> return b
   compileCase (LitP l) = do
     \x b -> return $
       let cond = IRBinCall x "===" (IRLit l)
-        in IRIf cond $ IRSequence b
+        in IRIf cond (IRReturn b)
   compileCase (StructP n args) = do
     let args' x = concat <$> zipWithM (\arg v -> do
               f <- findPattern arg
@@ -68,7 +68,7 @@ module Core.Compiler.Modules.Pattern where
           conds = case cs of
                     c@(_:_) -> createAnd (c ++ cond)
                     _ -> createAnd cond
-        in return $ IRIf conds $ IRSequence $ lets ++ b
+        in return $ IRIf conds $ IRSequence $ lets ++ [IRReturn b]
 
   createAnd :: [IR] -> IR
   createAnd [] = error "test"

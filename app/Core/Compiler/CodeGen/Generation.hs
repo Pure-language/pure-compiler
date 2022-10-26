@@ -15,12 +15,14 @@ module Core.Compiler.CodeGen.Generation where
   from IRContinue = "continue;"
   from IRBreak = "break;"
   from (IRImport names from') = "const { " ++ intercalate ", " names ++ " } = " ++ from from' ++ ";"
-
+  
+  from (IRCall l@(IRLambda _ _) args') = "(" ++ from l ++ ")(" ++ intercalate ", " (map from args') ++ ")"
   from (IRCall n args) = from n ++ "(" ++ intercalate "," (map from args) ++ ")"
   from (IRLamStruct fields) = "{" ++ concatMap (\(n, v) -> n ++ ": " ++ from v ++ ", ") fields ++ "}"
   from (IRDeref e) = from e ++ ".value"
+  from (IRLambda args s@(IRLamStruct _)) = "(" ++ intercalate ", " args ++ ") => (" ++ from s ++ ")"
   from (IRLambda args body) = 
-    "(" ++ intercalate "," args ++ ") => {\n" ++ from body ++ "}"
+    "(" ++ intercalate "," args ++ ") => " ++ from body
   from (IRVariable n) = n
   from (IRBinCall e1 op e2) = "(" ++ from e1 ++ ") " ++ op ++ " (" ++ from e2 ++ ")"
   from (IRStructProp e n) = from e ++ "." ++ n

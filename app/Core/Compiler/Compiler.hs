@@ -54,30 +54,21 @@ module Core.Compiler.Compiler where
     return [IRModification (IRStructProp n' "value") e']
   compileStatement (If e s1 s2) = do
     e' <- compileExpression e
-    s1' <- compileStatement s1
-    s2' <- compileStatement s2
-    return [IRIfElse e' (IRSequence s1') (IRSequence s2')]
-  compileStatement (Sequence stmts) = do
-    stmts' <- mapM compileStatement stmts
-    return $ concat stmts'
+    s1' <- compileExpression s1
+    s2' <- compileExpression s2
+    return [IRIfElse e' s1' s2']
   compileStatement (Expression e)
     = (:[]) <$> compileExpression e
   compileStatement (Return e)
     = (:[]) . IRReturn <$> compileExpression e
-  compileStatement (Match x pats) = do
-    x <- compileExpression x
-    xs <- mapM (\(p, b) -> do
-      b <- compileStatement b
-      compileCase p x b) pats
-    return $ [if length xs == 1 then head xs else createIfSequence xs]
   compileStatement (For (n, _) e body) = do
     e' <- compileExpression e
-    body' <- compileStatement body
-    return [IRFor (varify n) e' (IRSequence body')]
+    body' <- compileExpression body
+    return [IRFor (varify n) e' body']
   compileStatement (While e body) = do
     e' <- compileExpression e
-    body' <- compileStatement body
-    return [IRWhile e' (IRSequence body')]
+    body' <- compileExpression body
+    return [IRWhile e' body']
   compileStatement Break = return [IRBreak]
   compileStatement Continue = return [IRContinue]
   compileStatement x = error $ "Not implemented: " ++ show x
@@ -91,6 +82,12 @@ module Core.Compiler.Compiler where
     return $ IRCall call' args'
   compileExpression (Reference c t) = IRLamStruct . (:[]) . ("value",) <$> compileExpression c
   compileExpression (Unreference c t) = IRDeref <$> compileExpression c
+  compileExpression (Match x pats) = do
+    x <- compileExpression x
+    xs <- mapM (\(p, b) -> do
+      b <- compileExpression b
+      compileCase p x b) pats
+    return $ IRCall (IRLambda [] $ IRSequence $ if length xs == 1 then [head xs] else [createIfSequence xs]) []
   compileExpression (Constructor c t) = do
     getConstructor (varify c) >>= \case
       Just obj -> return $ IRStructProp (IRVariable obj) (varify c)
@@ -102,10 +99,16 @@ module Core.Compiler.Compiler where
     obj' <- compileExpression obj
     return $ IRStructProp obj' f
   compileExpression (Literal i t) = return $ IRLit i
+  compileExpression (Sequence stmts) = do
+    stmts' <- concat <$> mapM compileStatement stmts
+    let stmts'' = case last stmts' of 
+          IRReturn x -> IRSequence stmts'
+          x -> IRSequence $ init stmts' ++ [IRReturn x]
+    return $ IRCall (IRLambda [] stmts'') []
   compileExpression (Lambda args body t) = do
     let args' = map (\(n :@ _) -> varify n) args
-    body' <- compileStatement body
-    return $ IRLambda args' (if length body' == 1 then head body' else IRSequence body')
+    body' <- compileExpression body
+    return $ IRLambda args' body'
   compileExpression (BinaryOp op e1 e2 t) = do
     e1' <- compileExpression e1
     e2' <- compileExpression e2

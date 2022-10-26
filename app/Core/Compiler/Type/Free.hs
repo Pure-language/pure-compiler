@@ -10,16 +10,16 @@ module Core.Compiler.Type.Free where
     free (Assignment (name :@ _) e) = free e \\ [name]
     free (Modified n e) = free e \\ free n
     free (If c t e) = free c `union` free t `union` free e
-    free (Sequence ss) = free ss
     free (Expression e)  = free e
     free (Return e) = free e
-    free (Match e cases) = free e `union` c
-      where c = concatMap (\(x,y) -> free y \\ free x) cases
     free (Enum _ _) = []
     free _ = []
 
   instance Free TypedExpression where
     free (FunctionCall n xs _) = free n `union` free xs
+    free (Match e cases) = free e `union` c
+      where c = concatMap (\(x,y) -> free y \\ free x) cases
+    free (Sequence ss) = free ss
     free (Lambda args body t) = free body \\ args'
       where args' = map (\(x :@ _) -> x) args
     free (Variable s t) = [s]
@@ -41,6 +41,7 @@ module Core.Compiler.Type.Free where
     free (LitP _) = []
     free WilP = []
     free (AppP _ xs) = free xs
+    free (StructP _ xs) = free $ map snd xs
 
   instance (Free a, Free b) => Free (a, b) where
     free (x, y) = free x `union` free y
