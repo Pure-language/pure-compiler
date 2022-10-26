@@ -43,6 +43,9 @@ module Core.Compiler.Type.Free where
     free WilP = []
     free (AppP _ xs) = free xs
     free (StructP _ xs) = free $ map snd xs
+    free EmptyListP = []
+    free (ListP xs) = free xs
+    free (SpreadP x t) = [x]
 
   instance (Free a, Free b) => Free (a, b) where
     free (x, y) = free x `union` free y

@@ -16,6 +16,9 @@ module Core.Compiler.Compiler where
   import Core.Compiler.Type (MonadCompiler, getConstructor)
   import Core.TypeChecking.Unification (TypeState (modules), Module (Module))
   
+  isValidOperator :: String -> Bool
+  isValidOperator = (`elem` ["+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=", ">="])
+
   analyseIRModule :: [IR] -> [String]
   analyseIRModule ((IRExport (IRDeclaration n _)):xs) = n : analyseIRModule xs
   analyseIRModule (_:xs) = analyseIRModule xs
@@ -118,7 +121,9 @@ module Core.Compiler.Compiler where
   compileExpression (BinaryOp op e1 e2 t) = do
     e1' <- compileExpression e1
     e2' <- compileExpression e2
-    return $ IRBinCall e1' op e2'
+    if isValidOperator op 
+      then return $ IRBinCall e1' op e2'
+      else return $ IRCall (IRVariable (varify op)) [e1', e2']
   compileExpression (UnaryOp op e t) = do
     e' <- compileExpression e
     return $ IRUnaryCall op e'

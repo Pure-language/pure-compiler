@@ -8,7 +8,8 @@ module Core.Compiler.Modules.Pattern where
   import Prelude hiding (and)
   import Data.Maybe (fromJust, isJust)
   import Control.Monad (zipWithM)
-
+  import Debug.Trace (traceShowM)
+  
   and :: IR -> IR -> IR
   and l = IRBinCall l "&&"
 
@@ -24,6 +25,21 @@ module Core.Compiler.Modules.Pattern where
     return $ \e -> do
       let xs'' = map (\(x, f) -> f (IRStructProp e x)) xs'
       concat ([(Nothing, Just $ IRBinCall (IRStructProp e "type") "===" (IRLit (S n)))] : xs'')
+  findPattern (ListP xs) = do
+    xs' <- zipWithM (\i y -> do
+        f <- findPattern y
+        case y of
+          SpreadP n _ ->
+            return $ \e -> f (IRCall (IRStructProp e "slice") [IRLit (I i)])
+          _ ->
+            return $ \e -> f (IRIndex e (IRLit (I i)))) [0..] xs
+    return $ \e -> do
+      let xs'' = map (\f -> f e) xs'
+      concat ([(Nothing, Just $ IRBinCall (IRStructProp e "length") ">=" (IRLit (I $ toInteger (length xs - 1))))] : xs'')
+  findPattern EmptyListP = do
+    return $ \e -> [(Nothing, Just $ IRBinCall (IRLit (I 0)) "===" (IRStructProp e "length"))]
+  findPattern (SpreadP n p) = do
+    return $ \e -> [(Just $ IRDeclaration (varify n) e, Nothing)]
   findPattern (StructP n args) = do
     args' <- mapM (\(x, y) -> (x,) <$> findPattern y) args
     return $ \e -> do
@@ -31,6 +47,25 @@ module Core.Compiler.Modules.Pattern where
       concatMap (\(x, y) -> [(Nothing, Just $ IRIn (IRLit (S x)) e)]) args ++ args''
 
   compileCase :: MonadCompiler m => TypedPattern -> IR -> IR -> m IR
+  compileCase EmptyListP = do
+    \x b -> return $ IRIf (IRBinCall (IRLit (I 0)) "===" (IRStructProp x "length")) (IRReturn b)
+  compileCase (ListP xs) = do
+    \x b -> do
+      args_ <- concat <$> zipWithM (\i y -> do
+        f <- findPattern y
+        case y of 
+          SpreadP n _ ->
+            return $ f (IRCall (IRStructProp x "slice") [IRLit (I i)])
+          _ ->
+            return $ f (IRIndex x (IRLit (I i)))) [0..] xs
+      let lets   = map (fromJust . fst) $ filter (isJust . fst) args_
+      let cond = IRBinCall (IRStructProp x "length") ">=" (IRLit (I $ toInteger (length xs - 1)))
+      let cs = map (fromJust . snd) $ filter (isJust . snd) args_
+      let conds = createAnd $ cond : cs
+        in return $ IRIf conds $ IRSequence $ lets ++ [IRReturn b]
+  compileCase (SpreadP n _) = do
+    \x b -> do
+      return $ IRSequence [IRDeclaration (varify n) (IRCall (IRStructProp x "slice") [IRLit (I 0)]), IRReturn b]
   compileCase (VarP n t) = do
     \x b -> getConstructor n >>= \case
       Just _ -> return $
