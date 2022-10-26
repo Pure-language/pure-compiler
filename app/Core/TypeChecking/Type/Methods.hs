@@ -91,6 +91,7 @@ module Core.TypeChecking.Type.Methods where
     apply s (LetIn v e b t) = LetIn (apply s v) (apply s e) (apply s b) (apply s t)
     apply s (Match e ps) = Match (apply s e) (apply s ps)
     apply s (Sequence ss) = Sequence (apply s ss)
+    apply s (Throw e t) = Throw (apply s e) (apply s t)
 
   instance Types TypedPattern where
     free _ = undefined

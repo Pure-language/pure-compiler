@@ -30,6 +30,7 @@ module Core.TypeChecking.Type.AST where
   data TypedExpression
     = FunctionCall TypedExpression [TypedExpression] Type
     | Lambda [Annoted String] TypedExpression Type    
+    | Throw TypedExpression Type
     | Variable String Type
     | Sequence [TypedStatement]
     | Match TypedExpression [(TypedPattern, TypedExpression)]

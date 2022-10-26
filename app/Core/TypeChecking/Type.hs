@@ -293,6 +293,10 @@ module Core.TypeChecking.Type where
           _ :=> ty -> if null preds then ty else map appify (L.nub preds) :-> ty
           _ -> if null preds then t2 else map appify (L.nub preds) :-> t2
 
+    when (name == "main" && not (null args)) $ 
+      throwError ("Main function cannot have extension constraints",
+        Just $ "Having " ++ L.intercalate ", " (map (show . snd) args) ++ " as constraint(s)", pos)
+
     return (Just Void, s4, (env'', cons), [A.Assignment (name A.:@ apply s4 t2') (apply s4 $ if not (null args) then A.Lambda (L.nub $ map annotate args) v'' t2' else v'')])
   tyStatement (p, _) (If cond thenStmt elseStmt :> pos) = do
     (t1, s1, e1, v1) <- tyExpression cond
@@ -844,6 +848,10 @@ module Core.TypeChecking.Type where
   tyExpression (Reference n :> pos) = do
     (t, s, e, n1) <- tyExpression n
     return (RefT t, s, e, A.Reference n1 (RefT t))
+  tyExpression (Throw e :> pos) = do
+    (t, s, e, v) <- tyExpression e
+    tv <- fresh
+    return (tv, s, e, A.Throw v t)
   tyExpression (Unreference n :> pos) = do
     ty <- fresh
     (t, s, e, n1) <- tyExpression n
@@ -872,6 +880,7 @@ module Core.TypeChecking.Type where
   appearsInTC' (A.Constructor _ t) ty = appearsInTC ty t
   appearsInTC' (A.UnaryOp _ e t) ty = appearsInTC ty t ++ appearsInTC' e ty
   appearsInTC' (A.Index e1 e2 t) ty = appearsInTC ty t ++ appearsInTC' e1 ty ++ appearsInTC' e2 ty
+  appearsInTC' (A.Throw e t) ty = appearsInTC ty t ++ appearsInTC' e ty
   appearsInTC' (A.Match e cases) ty = appearsInTC' e ty ++ concatMap (\(_, s) -> appearsInTC' s ty) cases
 
   appearsInTCStmt :: A.TypedStatement -> Type -> [Class]

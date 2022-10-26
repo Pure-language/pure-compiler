@@ -52,6 +52,7 @@ module Core.TypeChecking.Type.Pretty where
     = show e ++ "[" ++ show i ++ "]"
   showExpr (Structure n fields _)
     = bBlue "struct " ++ n ++ " { " ++ intercalate ", " (map (\(n, f) -> n ++ ": " ++ show f) fields) ++ " }"
+  showExpr (Throw e _) = bBlue "throw " ++ show e
   showExpr (Object obj field _)
     = show obj ++ "." ++ field
   showExpr (Ternary e1 e2 e3 _)
