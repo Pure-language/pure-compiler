@@ -13,7 +13,7 @@ module Core.TypeChecking.Type where
   import qualified Data.Map as M
   import Core.TypeChecking.Substitution (Types(free, apply), Substitution)
   import Data.Foldable (foldlM)
-  import Core.TypeChecking.Unification (mgu, check, constraintCheck, MonadType, Methods, TypeState(..), Module (Module), ClassEnv, align)
+  import Core.TypeChecking.Unification (mgu, check, constraintCheck, MonadType, Methods, TypeState(..), Module (Module), ClassEnv, align, Macro(..))
   import Data.Either (isLeft, fromRight, isRight)
   import Data.Maybe (isNothing, fromMaybe, isJust)
   import qualified Core.TypeChecking.Type.AST as A
@@ -32,7 +32,7 @@ module Core.TypeChecking.Type where
   import Error.Diagnose (addFile, printDiagnostic, defaultStyle)
   import qualified Data.Void as V
   import Control.Applicative
-  
+
   instance HasHints V.Void String where
     hints _ = mempty
 
@@ -41,6 +41,11 @@ module Core.TypeChecking.Type where
 
   getPosition :: Located a -> (SourcePos, SourcePos)
   getPosition (_ :> pos) = pos
+
+  addMacro :: MonadType m => String -> Macro -> m ()
+  addMacro name macro = do
+    macros <- gets macros
+    modify $ \s -> s {macros = M.insert name macro macros}
 
   addClass :: MonadType m => String -> (Bool, Methods) -> m ()
   addClass c ms = modify $ \s -> s { classEnv = M.insert c ms (classEnv s) }
@@ -293,7 +298,7 @@ module Core.TypeChecking.Type where
           _ :=> ty -> if null preds then ty else map appify (L.nub preds) :-> ty
           _ -> if null preds then t2 else map appify (L.nub preds) :-> t2
 
-    when (name == "main" && not (null args)) $ 
+    when (name == "main" && not (null args)) $
       throwError ("Main function cannot have extension constraints",
         Just $ "Having " ++ L.intercalate ", " (map (show . snd) args) ++ " as constraint(s)", pos)
 
@@ -452,10 +457,13 @@ module Core.TypeChecking.Type where
             file <- liftIO $ readFile path
             case parsePure path file of
               Right ast -> do
-                (v1, TypeState _ inst cls _, e1) <- runModuleCheck ast
+                (v1, TypeState _ inst cls _ m, e1) <- runModuleCheck ast
                 addModule path v1
-                (cls', inst') <- (,) <$> gets classEnv <*> gets instances
-                modify $ \s -> s { classEnv = filterClasses cls `M.union` cls', instances = filterInstances inst `L.union` inst' }
+                (cls', (inst', m')) <- (,) <$> gets classEnv <*> ((,) <$> gets instances <*> gets macros)
+                modify $ \s -> s {
+                  classEnv = filterClasses cls `M.union` cls',
+                  instances = filterInstances inst `L.union` inst',
+                  macros = M.filter macroIsPublic m `M.union` m' }
                 return (Nothing, M.empty, filterEnv e1, [A.Import expr path])
               Left e -> do
                 let diag  = errorDiagnosticFromParseError Nothing "Parse error on input" Nothing e
@@ -490,6 +498,14 @@ module Core.TypeChecking.Type where
     return (Just Void, M.empty, (M.empty, M.empty), [A.Continue])
   tyStatement (p, _) (Break :> pos) = do
     return (Just Void, M.empty, (M.empty, M.empty), [A.Break])
+  tyStatement (_, p) (Macro name args e :> pos) = do
+    addMacro name (MacroItem {
+      macroIsPublic = p,
+      macroArgs = args,
+      macroBody = e,
+      macroName = name
+    })
+    return (Nothing, M.empty, (M.empty, M.empty), [])
 
   resolveInstancesStmt :: MonadType m => Located A.TypedStatement -> m (A.TypedStatement, [(String, Type)], [Class])
   resolveInstancesStmt (A.Assignment (name A.:@ ty) expr :> pos) = do
@@ -592,6 +608,45 @@ module Core.TypeChecking.Type where
   isInStruct n (TRec cls) = isJust $ lookup n cls
   isInStruct _ _ = error "Not a structure"
 
+  macroEnv :: MonadType m => m (M.Map String Macro)
+  macroEnv = gets macros
+
+  replaceInMacroStmt :: [(String, Located Expression)] -> Located Statement -> Located Statement
+  replaceInMacroStmt z (Assignment n e :> pos) = Assignment n (replaceInMacroExpr z e) :> pos
+  replaceInMacroStmt z (Return e :> pos) = Return (replaceInMacroExpr z e) :> pos
+  replaceInMacroStmt z (If e s1 s2 :> pos) = If (replaceInMacroExpr z e) (replaceInMacroExpr z s1) (replaceInMacroExpr z s2) :> pos
+  replaceInMacroStmt z (While e s :> pos) = While (replaceInMacroExpr z e) (replaceInMacroExpr z s) :> pos
+  replaceInMacroStmt z (For n e s :> pos) = For n (replaceInMacroExpr z e) (replaceInMacroExpr z s) :> pos
+  replaceInMacroStmt z (Modified n e :> pos) = Modified n (replaceInMacroExpr z e) :> pos
+  replaceInMacroStmt z (Instance n1 n2 n3 f b :> pos) = Instance n1 n2 n3 (map (B.second (replaceInMacroExpr z)) f) b :> pos
+  replaceInMacroStmt z (Expression e :> pos) = Expression (unlocate $ replaceInMacroExpr z (e :> pos)) :> pos
+  replaceInMacroStmt _ x = x
+
+  unlocate :: Located a -> a
+  unlocate (x :> _) = x
+
+  replaceInMacroExpr :: [(String, Located Expression)] -> Located Expression -> Located Expression
+  replaceInMacroExpr z (Lambda args t e :> pos) = Lambda args t (replaceInMacroExpr z e) :> pos
+  replaceInMacroExpr z (BinaryOp op e1 e2 :> pos) = BinaryOp op (replaceInMacroExpr z e1) (replaceInMacroExpr z e2) :> pos
+  replaceInMacroExpr z (UnaryOp op e :> pos) = UnaryOp op (replaceInMacroExpr z e) :> pos
+  replaceInMacroExpr z (List e :> pos) = List (map (replaceInMacroExpr z) e) :> pos
+  replaceInMacroExpr z (Index e1 e2 :> pos) = Index (replaceInMacroExpr z e1) (replaceInMacroExpr z e2) :> pos
+  replaceInMacroExpr z (Structure n fields :> pos) = Structure n (map (B.second (replaceInMacroExpr z)) fields) :> pos
+  replaceInMacroExpr z (Object o f :> pos) = Object (replaceInMacroExpr z o) f :> pos
+  replaceInMacroExpr z (Ternary e1 e2 e3 :> pos) = Ternary (replaceInMacroExpr z e1) (replaceInMacroExpr z e2) (replaceInMacroExpr z e3) :> pos
+  replaceInMacroExpr z (Reference n :> pos) = Reference (replaceInMacroExpr z n) :> pos
+  replaceInMacroExpr z (Unreference n :> pos) = Unreference (replaceInMacroExpr z n) :> pos
+  replaceInMacroExpr z (Sequence exprs :> pos) = Sequence (map (replaceInMacroStmt z) exprs) :> pos
+  replaceInMacroExpr z (FunctionCall n args :> pos) = FunctionCall n (map (replaceInMacroExpr z) args) :> pos
+  replaceInMacroExpr z (Match e cases :> pos) = Match (replaceInMacroExpr z e) (map (B.second (replaceInMacroExpr z)) cases) :> pos
+  replaceInMacroExpr z (Variable n c :> pos) = case lookup n z of
+    Just e -> e
+    Nothing -> Variable n c :> pos
+  replaceInMacroExpr z (LetIn n e1 e2 :> pos) = LetIn n (replaceInMacroExpr z e1) (replaceInMacroExpr z e2) :> pos
+  replaceInMacroExpr z (Cast e t :> pos) = Cast (replaceInMacroExpr z e) t :> pos
+  replaceInMacroExpr z (Throw e :> pos) = Throw (replaceInMacroExpr z e) :> pos
+  replaceInMacroExpr _ x = x
+
   tyExpression :: (MonadType m, MonadFail m) => Located Expression -> m (Type, Substitution, Env, A.TypedExpression)
   tyExpression (LetIn (name :@ ty) value body :> pos) = do
     -- Fresh type for recursive definitions
@@ -628,23 +683,54 @@ module Core.TypeChecking.Type where
     (t3, s2, e2, b') <- local (B.second . applyTypes . const $ apply s3 env'') $ tyExpression body
     let s4 = compose s2 s3
     return (t2, s4, apply s4 (env'', cons), A.LetIn (name A.:@ apply s4 t2) v1 b' t3)
+  tyExpression (FunctionCall n@(Variable name _ :> p1) xs :> pos) = do
+    macroEnv >>= \e -> case M.lookup name e of
+      Just (MacroItem _ args body _) -> do
+        let correspondance = zip args xs
+        (t, s, e, b) <- tyExpression $ replaceInMacroExpr correspondance body
+        return (t, s, e, b)
+      Nothing -> do
+        tv <- fresh
+        (t1, s1, e1, n1) <- tyExpression n
+        (_, e) <- ask
+        (t2, s2, e2, args) <- foldlM (\(t, s, e, a) x -> do
+          (t', s', e', a') <- local (B.second $ apply s) $ tyExpression x
+          return (t ++ [t'], s' `compose` s, e' `union` e, a ++ [a'])) ([], s1, e, []) xs
+
+        let cls' = concatMap (\case
+                    cls :=> _ -> cls
+                    _ -> []) t2 ++ (case t1 of
+                      cls :=> _ -> cls
+                      _ -> [])
+
+        (_, (_, c)) <- ask
+        case compose <$> mgu c (apply s2 t1) (t2 :-> tv) <*> mgu c (t2 :-> tv) (apply s2 t1) of
+          Right s3 -> do
+            return (apply s3 tv, s3 `compose` s2 `compose` s1, e, apply s3 $ A.FunctionCall n1 args (apply s3 (cls' :=> (t2 :-> tv))))
+          Left x -> throwError (x, Nothing, pos)
   tyExpression (Variable name cast :> pos) = do
-    (map', (env, cons)) <- ask
-    case M.lookup name env of
-      Just t@(Forall b tvs _) -> do
-        cast' <- mapM (`createType` map') cast
-        let s = M.fromList $ zip tvs cast'
-        t' <- tyInstantiate (applyForall s t)
-        return (t', M.empty, (M.empty, M.empty), A.Variable name t')
-      Nothing -> case M.lookup name cons of
-        Just t@(Forall b tvs _) -> do
-          cast' <- mapM (`createType` map') cast
-          let s = M.fromList $ zip tvs cast'
-          t' <- tyInstantiate (applyForall s t)
-          return (t', M.empty, (M.empty, M.empty), A.Constructor name t')
-        Nothing -> throwError (
-          "Variable " ++ name ++ " is not defined",
-          Just "Check for declarations and check types", pos)
+    macroEnv >>= \e -> case M.lookup name e of
+      Just (MacroItem _ [] b _) -> do
+        (t, s, e, b') <- tyExpression b
+        return (t, s, e, b')
+      Just x -> throwError ("Macro " ++ name ++ " should be called with " ++ show (length $ macroArgs x)  ++ " argument(s)", Nothing, pos)
+      Nothing -> do
+        (map', (env, cons)) <- ask
+        case M.lookup name env of
+          Just t@(Forall b tvs _) -> do
+            cast' <- mapM (`createType` map') cast
+            let s = M.fromList $ zip tvs cast'
+            t' <- tyInstantiate (applyForall s t)
+            return (t', M.empty, (M.empty, M.empty), A.Variable name t')
+          Nothing -> case M.lookup name cons of
+            Just t@(Forall b tvs _) -> do
+              cast' <- mapM (`createType` map') cast
+              let s = M.fromList $ zip tvs cast'
+              t' <- tyInstantiate (applyForall s t)
+              return (t', M.empty, (M.empty, M.empty), A.Constructor name t')
+            Nothing -> throwError (
+              "Variable " ++ name ++ " is not defined",
+              Just "Check for declarations and check exported variables", pos)
   tyExpression (Index e i :> pos) = do
     (t1, s1, e1, v1) <- tyExpression e
     (t2, s2, e2, v2) <- tyExpression i
@@ -933,7 +1019,7 @@ module Core.TypeChecking.Type where
         (_, (_, c)) <- ask
         [TRec fs] :-> t' <- tyInstantiate t
         let fields' = map (\((_, t), (_, p)) -> (p, t)) $ align xs fs
-        envs <- forM fields' (\(p, t) -> tyPattern t >>= \case 
+        envs <- forM fields' (\(p, t) -> tyPattern t >>= \case
           z@(p', s, t', m) -> return (mgu c p t', z))
         let (s, (ps, ss, ts, ms)) = B.second unzip4 $ unzip envs
         let s' = foldl (\acc x -> compose <$> x <*> acc) (Right M.empty) s
@@ -1001,7 +1087,7 @@ module Core.TypeChecking.Type where
 
   runModuleCheck :: MonadType m => [Located Statement] -> m ([A.TypedStatement], TypeState, Env)
   runModuleCheck stmt = do
-    (stmts, TypeState counter' inst cls mod, env) <- foldlM (\(x, state, env) xs -> do
+    (stmts, TypeState counter' inst cls mod m, env) <- foldlM (\(x, state, env) xs -> do
       x' <- runExceptT $ runRWST (tyStatement ("", False) xs) (M.empty, env) state
       case x' of
         Right ((_, _, env', stmts), state', _) -> do
@@ -1011,14 +1097,16 @@ module Core.TypeChecking.Type where
         counter = 0,
         classEnv = M.empty,
         instances = [],
-        modules = M.empty
+        modules = M.empty,
+        macros = M.empty
       }, (env, M.empty)) stmt
 
     return (stmts, TypeState {
       counter = counter',
       classEnv = filterClasses cls,
       instances = filterInstances inst,
-      modules = mod
+      modules = mod,
+      macros = m
     }, env)
 
   filterInstances :: Instances -> Instances
@@ -1040,5 +1128,6 @@ module Core.TypeChecking.Type where
         counter = 0,
         classEnv = M.empty,
         instances = [],
-        modules = M.empty
+        modules = M.empty,
+        macros = M.empty
       })) stmt

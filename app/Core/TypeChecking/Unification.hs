@@ -17,15 +17,23 @@ module Core.TypeChecking.Unification where
   import Data.Foldable (foldlM)
   import Core.TypeChecking.Type.AST (TypedStatement)
   import Core.TypeChecking.Type.Pretty ()
-
+  import Core.Parser.AST (Located, Expression)
+  
   type ReaderEnv = (M.Map String Type, Env)
   data Module = Module String [TypedStatement]
     deriving Show
+  data Macro = MacroItem {
+      macroName :: String,
+      macroArgs :: [String],
+      macroBody :: Located Expression,
+      macroIsPublic :: Bool
+    } deriving Show
   data TypeState = TypeState {
       counter :: Int,
       instances :: Instances,
       classEnv :: ClassEnv,
-      modules :: M.Map String Module
+      modules :: M.Map String Module,
+      macros :: M.Map String Macro
     } deriving Show
   type Methods = [String]
   type ClassEnv = M.Map String (Bool, Methods)
