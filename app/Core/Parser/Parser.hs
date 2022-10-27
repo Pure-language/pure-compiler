@@ -15,17 +15,17 @@ module Core.Parser.Parser where
   import Data.Maybe (fromMaybe, isJust)
   import Prelude hiding (break)
   import Control.Monad (guard)
-  
+
   {- LEXER PART -}
   languageDef =
     emptyDef {  Token.commentStart    = "/*"
               , Token.commentEnd      = "*/"
               , Token.commentLine     = "//"
-              , Token.identStart      = letter <|> char '_'
+              , Token.identStart      = letter <|> char '_' <|> char '@'
               , Token.identLetter     = alphaNum <|> char '_'
               , Token.reservedNames   = ["let", "=", "fun", "if", "else", "return", "extern", "match", "in", "for", "impl"," extension", "struct", "mut", "while"]
               , Token.reservedOpNames = ["(", ")", "*", "+", "-", "/", "{", "}", "[", "]", "<", ">"] }
-  
+
   operators :: Parser String
   operators = do
     try $ (some (oneOf "+-*/$=") <|> (Token.angles lexer operators >>= \op -> return ("<" ++ op ++ ">"))) >>= \res -> guard (res /= "=") >> return res
@@ -168,7 +168,8 @@ module Core.Parser.Parser where
       class',
       functionStmt,
       assignment,
-      mutable
+      mutable,
+      macro
     ]
 
   public :: Pure Statement
@@ -382,6 +383,16 @@ module Core.Parser.Parser where
     reservedOp "}"
     e <- getPosition
     return (Record name gen fields :> (s, e))
+
+  macro :: Pure Statement
+  macro = do
+    s <- getPosition
+    reserved "macro"
+    name <- identifier
+    gen <- (reserved "=" $> []) <|> parens (commaSep identifier)
+    expr <- expression
+    e <- getPosition
+    return $ Macro name gen expr :> (s, e)
 
   functionStmt :: Pure Statement
   functionStmt = do

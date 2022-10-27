@@ -27,6 +27,7 @@ module Core.Parser.AST.Expression where
     | For String (Located Expression) (Located Expression)
     | While (Located Expression) (Located Expression)
     | Continue | Break
+    | Macro String [String] (Located Expression)
     deriving (Show, Eq)
 
   data Annoted a = a :@ Maybe Declaration
