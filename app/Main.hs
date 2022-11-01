@@ -18,6 +18,7 @@ module Main where
   import qualified Data.Map as M
   import Control.Arrow (Arrow(second))
   import System.FilePath
+  import Core.AsyncChecker (checkToplevel)
   
   main :: IO ()
   main = do
@@ -25,20 +26,23 @@ module Main where
     x <- readFile file
     case parsePure file x of
       Right ast -> do
-        ast' <- runCheck ast
-        case ast' of
-          Right (ast, state) -> do
-            ast <- runANF ast
-            --ast <- runGarbageMonad ast
-            --mapM_ ((>> putStrLn "") . print) ast
-
-            cs <- mapM (\(Module path stmts) -> (path,) <$> runCompiler state stmts) $ M.elems (modules state)
-            c <- runCompiler state ast
-            let cs' = map (second (concatMap ((++ ";") . from))) cs
-            let c' = concatMap ((++";") . from) c
-            mapM_ (\(path, c) -> writeFile (path -<.> ".mjs") c) cs'
-            writeFile (file -<.> ".mjs") (c' ++ "main();")
-          err -> printError err "While typechecking this"
+        case mapM checkToplevel ast of
+          Right ast -> do
+            ast' <- runCheck ast
+            case ast' of
+              Right (ast, state) -> do
+                ast <- runANF ast
+                --ast <- runGarbageMonad ast
+                --mapM_ ((>> putStrLn "") . print) ast
+                
+                cs <- mapM (\(Module path stmts) -> (path,) <$> runCompiler state stmts) $ M.elems (modules state)
+                c <- runCompiler state ast
+                let cs' = map (second (concatMap ((++ ";") . from))) cs
+                let c' = concatMap ((++";") . from) c
+                mapM_ (\(path, c) -> writeFile (path -<.> ".mjs") c) cs'
+                writeFile (file -<.> ".mjs") (c' ++ "main();")
+              err -> printError err "While typechecking this"
+          err -> printError err "While checking await expressions"
       Left err ->
         let diag  = errorDiagnosticFromParseError Nothing "Parse error on input" Nothing err
             diag' = addFile diag file x
