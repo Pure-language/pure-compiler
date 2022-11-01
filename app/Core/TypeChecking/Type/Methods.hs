@@ -92,6 +92,8 @@ module Core.TypeChecking.Type.Methods where
     apply s (Match e ps) = Match (apply s e) (apply s ps)
     apply s (Sequence ss) = Sequence (apply s ss)
     apply s (Throw e t) = Throw (apply s e) (apply s t)
+    apply s (Await e t) = Await (apply s e) (apply s t)
+    apply s (Async e) = Async (apply s e)
 
   instance Types TypedPattern where
     free _ = undefined

@@ -98,6 +98,7 @@ module Core.TypeChecking.Type where
   createType BoolE _ = return Bool
   createType CharE _ = return Char
   createType (Ref t) env = RefT <$> createType t env
+  createType (AsyncE t) env = TApp (TId "Future") <$> createType t env
 
   replace :: Declaration -> M.Map String Type -> Type
   replace (Id a args) m = case M.lookup a m of
@@ -115,6 +116,7 @@ module Core.TypeChecking.Type where
   replace BoolE _ = Bool
   replace (AppE n xs) m = TApp (replace n m) (replace xs m)
   replace (Ref t) m = RefT (replace t m)
+  replace (AsyncE t) m = TApp (TId "Future") $ replace t m
 
   {- TYPE CHECKING -}
 
@@ -301,7 +303,7 @@ module Core.TypeChecking.Type where
     when (name == "main" && not (null args)) $
       throwError ("Main function cannot have extension constraints",
         Just $ "Having " ++ L.intercalate ", " (map (show . snd) args) ++ " as constraint(s)", pos)
-
+        
     return (Just Void, s4, (env'', cons), [A.Assignment (name A.:@ apply s4 t2') (apply s4 $ if not (null args) then A.Lambda (L.nub $ map annotate args) v'' t2' else v'')])
   tyStatement (p, _) (If cond thenStmt elseStmt :> pos) = do
     (t1, s1, e1, v1) <- tyExpression cond
@@ -448,7 +450,7 @@ module Core.TypeChecking.Type where
       then lookupEnv "PURE" >>= \case
         Nothing -> return $ Left ("PURE environment variable not set", Nothing, pos)
         Just p -> return . Right $ (p </> mod' ++ ".pure", A.BinaryOp "+" envVariable (stringLit ("/" </> mod' -<.> ".mjs")) string)
-      else return . Right $ (path, A.Literal (A.S path) string)
+      else return . Right $ (path, A.Literal (A.S (path -<.> ".mjs")) string)
     case path' of
       Left err -> throwError err
       Right (path, expr) -> do
@@ -457,7 +459,7 @@ module Core.TypeChecking.Type where
             file <- liftIO $ readFile path
             case parsePure path file of
               Right ast -> do
-                (v1, TypeState _ inst cls _ m, e1) <- runModuleCheck ast
+                (v1, TypeState _ inst cls _ m, e1) <- runModuleCheck (takeDirectory path) ast
                 addModule path v1
                 (cls', (inst', m')) <- (,) <$> gets classEnv <*> ((,) <$> gets instances <*> gets macros)
                 modify $ \s -> s {
@@ -540,7 +542,7 @@ module Core.TypeChecking.Type where
     cls :=> ty -> do
       env <- instances'
       (calls, tcs, preds) <- find' pos cls env
-      return (if not (null calls) then A.FunctionCall (A.Variable n (L.nub preds :=> ty)) calls ty else A.Variable n t, L.nub tcs, L.nub preds)
+      return (if not (null calls) then A.FunctionCall (A.Variable n (map appify cls :-> ty)) calls ty else A.Variable n t, L.nub tcs, L.nub preds)
     _ -> return (A.Variable n t, [], [])
   resolveInstances (A.FunctionCall e x t :> pos) = do
     (e', tcs, cls) <- resolveInstances (e :> pos)
@@ -596,6 +598,12 @@ module Core.TypeChecking.Type where
       (e', tcs', cls') <- resolveInstances (e :> pos)
       return ((p, e'), tcs', cls')) cases
     return (A.Match expr' cases', L.nub $ tcs ++ concat tcs', L.nub $ cls ++ concat cls')
+  resolveInstances (A.Async e :> pos) = do
+    (e', tcs, cls) <- resolveInstances (e :> pos)
+    return (A.Async e', tcs, cls)
+  resolveInstances (A.Await e t :> pos) = do
+    (e', tcs, cls) <- resolveInstances (e :> pos)
+    return (A.Await e' t, tcs, cls)
   resolveInstances (x :> _) = return (x, [], [])
 
   annotate :: (String, Type) -> A.Annoted String
@@ -816,7 +824,6 @@ module Core.TypeChecking.Type where
     let env'  = foldl (flip M.delete) env args'
         env'' = env' `M.union` M.fromList (zipWith (\x t -> (x, Forall False [] t)) args' tvs)
     (t, s1, _, b) <- local (const (table `M.union` map', (env'', cons))) $ tyExpression body
-
     let argTy = apply s1 tvs
     let argTy' = L.nub $ concatMap (\t ->
           let res = concatMap (appearsInTC' b) (getTVars t)
@@ -949,7 +956,19 @@ module Core.TypeChecking.Type where
         let s2 = s' `compose` s
         return (apply s2 ty, s2, apply s2 e, A.Unreference n1 (apply s2 ty))
       Left x -> throwError (x, Nothing, pos)
-  tyExpression x = error $ "No supported yet: " ++ show x
+  tyExpression (Await e :> pos) = do
+    (t, s, e, v) <- tyExpression e
+    tv <- fresh
+    (_, (_, c)) <- ask
+    case mgu c t (TApp (TId "Future") tv) of
+      Right s' -> do
+        let s2 = s' `compose` s
+        return (apply s2 tv, s2, apply s2 e, A.Await v (apply s2 tv))
+      Left x -> throwError (x, Nothing, pos)
+  tyExpression (Async e :> pos) = do
+    (t, s, e, v) <- tyExpression e
+    return (TApp (TId "Future") t, s, e, A.Async v)
+  tyExpression (x :> pos) = throwError ("Error that should not happen", Nothing, pos)
 
   appearsInTC' :: A.TypedExpression -> Type -> [Class]
   appearsInTC' (A.Variable _ t) ty = appearsInTC ty t
@@ -970,6 +989,8 @@ module Core.TypeChecking.Type where
   appearsInTC' (A.Index e1 e2 t) ty = appearsInTC ty t ++ appearsInTC' e1 ty ++ appearsInTC' e2 ty
   appearsInTC' (A.Throw e t) ty = appearsInTC ty t ++ appearsInTC' e ty
   appearsInTC' (A.Match e cases) ty = appearsInTC' e ty ++ concatMap (\(_, s) -> appearsInTC' s ty) cases
+  appearsInTC' (A.Await e t) ty = appearsInTC ty t ++ appearsInTC' e ty
+  appearsInTC' (A.Async e) ty = appearsInTC' e ty
 
   appearsInTCStmt :: A.TypedStatement -> Type -> [Class]
   appearsInTCStmt (A.Expression e) ty = appearsInTC' e ty
@@ -1085,10 +1106,10 @@ module Core.TypeChecking.Type where
       ("false", Forall False [] Bool)
     ]
 
-  runModuleCheck :: MonadType m => [Located Statement] -> m ([A.TypedStatement], TypeState, Env)
-  runModuleCheck stmt = do
+  runModuleCheck :: MonadType m => String -> [Located Statement] -> m ([A.TypedStatement], TypeState, Env)
+  runModuleCheck dir stmt = do
     (stmts, TypeState counter' inst cls mod m, env) <- foldlM (\(x, state, env) xs -> do
-      x' <- runExceptT $ runRWST (tyStatement ("", False) xs) (M.empty, env) state
+      x' <- runExceptT $ runRWST (tyStatement (dir, False) xs) (M.empty, env) state
       case x' of
         Right ((_, _, env', stmts), state', _) -> do
           return (x ++ stmts, state', env' `union` env)

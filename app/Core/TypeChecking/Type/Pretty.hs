@@ -37,7 +37,7 @@ module Core.TypeChecking.Type.Pretty where
     = show n ++ "(" ++ intercalate ", " (map show args) ++ ")"
   showExpr (Lambda args body _)
     = "(\\" ++ unwords (map (\(x :@ _) -> x) args) ++ " -> " ++ show body ++ ")"
-  showExpr (Variable n t) = bold n ++ ": " ++ show t
+  showExpr (Variable n t) = bold n
   showExpr (Constructor n _) = bGreen $ bold n
   showExpr (Literal l _) = show l
   showExpr (BinaryOp op e1 e2 _) = show e1 ++ " " ++ op ++ " " ++ show e2
@@ -63,6 +63,9 @@ module Core.TypeChecking.Type.Pretty where
     = "&" ++ show e
   showExpr (Unreference e _)
     = "*" ++ show e
+  showExpr (Await e _)
+    = bBlue "await " ++ show e
+  showExpr (Async e) = bBlue "async " ++ show e
 
   instance Show TypedExpression where
     show = showExpr

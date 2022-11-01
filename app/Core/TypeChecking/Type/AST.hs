@@ -47,6 +47,8 @@ module Core.TypeChecking.Type.AST where
     | LetIn (Annoted String) TypedExpression TypedExpression Type
     | Reference TypedExpression Type
     | Unreference TypedExpression Type
+    | Await TypedExpression Type
+    | Async TypedExpression
     deriving Eq
 
   data Literal
