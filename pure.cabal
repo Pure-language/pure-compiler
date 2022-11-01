@@ -40,10 +40,7 @@ executable pure
 
         Core.ANF
         Core.Garbage
-
-        Core.Conversion.Free
-        Core.Conversion.Close
-        Core.Conversion.Hoisting
+        Core.AsyncChecker
 
         Core.Compiler.Modules.ADT
         Core.Compiler.Modules.Pattern
