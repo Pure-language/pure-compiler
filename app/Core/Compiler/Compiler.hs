@@ -108,6 +108,12 @@ module Core.Compiler.Compiler where
     e' <- compileExpression e
     return $ embed $ IRSequence [IRThrow e']
   compileExpression (Literal i t) = return $ IRLit i
+  compileExpression (Async (Sequence stmts)) = do
+    stmts' <- concat <$> mapM compileStatement stmts
+    let stmts'' = case last stmts' of 
+          IRReturn x -> IRSequence stmts'
+          x -> IRSequence $ init stmts' ++ [if isStatement x then x else IRReturn x]
+    return $ IRCall (IRAsync $ IRLambda [] stmts'') []
   compileExpression (Sequence stmts) = do
     stmts' <- concat <$> mapM compileStatement stmts
     let stmts'' = case last stmts' of 
@@ -139,6 +145,8 @@ module Core.Compiler.Compiler where
     e2' <- compileExpression e2
     e3' <- compileExpression e3
     return $ IRTernary e1' e2' e3'
+  compileExpression (Async e) = IRAsync <$> compileExpression e
+  compileExpression (Await e _) = IRAwait <$> compileExpression e
   compileExpression x = error $ "Not implemented: " ++ show x
 
   runCompiler :: Monad m => TypeState -> [TypedStatement] -> m [IR]

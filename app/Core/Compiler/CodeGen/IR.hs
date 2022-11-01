@@ -32,6 +32,7 @@ module Core.Compiler.CodeGen.IR where
     | IRIn IR IR
     | IRThrow IR
     | IRAwait IR
+    | IRAsync IR
     deriving Show
 
   isIdent :: Char -> Bool

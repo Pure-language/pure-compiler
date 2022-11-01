@@ -34,6 +34,7 @@ module Core.Compiler.CodeGen.Generation where
   from (IRImport names from') = "const { " ++ intercalate ", " names ++ " } = " ++ from from' ++ ";"
   
   from (IRCall l@(IRLambda _ _) args') = "(" ++ from l ++ ")(" ++ intercalate ", " (map from args') ++ ")"
+  from (IRCall l@(IRAsync _) args') = "(" ++ from l ++ ")(" ++ intercalate ", " (map from args') ++ ")"
   from (IRCall n args) = from n ++ "(" ++ intercalate "," (map from args) ++ ")"
   from (IRLamStruct fields) = "{" ++ concatMap (\(n, v) -> n ++ ": " ++ from v ++ ", ") fields ++ "}"
   from (IRDeref e) = from e ++ ".value"
@@ -55,3 +56,4 @@ module Core.Compiler.CodeGen.Generation where
   from (IRAwait e) = "await " ++ from e
   from (IRIn e1 e2) = from e1 ++ " in " ++ from e2
   from (IRThrow e) = "throw " ++ from e
+  from (IRAsync e) = "async " ++ from e
