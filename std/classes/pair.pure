@@ -1,4 +1,12 @@
+import show
+
 pub struct Pair<a, b> {
   fst: a,
   snd: b
+}
+
+pub impl<a: Show, b: Show> Show for Pair<a, b> {
+  let show = fun(self) match self {
+    (a, b) = "(" + show(a) + ", " + show(b) + ")"
+  }
 }
