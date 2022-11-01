@@ -1,6 +1,6 @@
 <p align="center">
   <a href="" rel="noopener">
- <img height=96px src="assets/logo.png" alt="Project logo"></a>
+ <img height=96px style="border-radius: 500px" src="assets/logo.png" alt="Project logo"></a>
 </p>
 
 <h1 align="center">Pure Programming Language</h1>
