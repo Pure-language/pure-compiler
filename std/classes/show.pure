@@ -10,3 +10,31 @@ extern String: fun<a>(a) String
 pub impl Show for int {
   let show = fun(x) String(x).valueOf()
 }
+
+fun length<a>(lst: [a]) int {
+  match lst {
+    [] = 0,
+    [x, *xs] = 1 + length(xs)
+  }
+}
+
+pub impl<a: Show> Show for [a] {
+  let show = fun(xs) {
+    mut s = "["
+    mut i = 0
+    for x in xs {
+      i = *i + 1
+      s = *s + show(x) + (length(xs) == *i ? "" : ", ")
+    }
+    return *s + "]"
+  }
+}
+
+pub impl Show for str override {
+  let show = fun(s) "\"" + s + "\""
+}
+
+
+pub impl<a: Show> Show for ref a {
+  let show = fun(x) "ref " + show(*x)
+}
