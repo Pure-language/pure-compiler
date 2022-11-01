@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE LambdaCase #-}
 module Core.Parser.Parser where
   import Text.Parsec
   import Text.Parsec.Expr
@@ -101,8 +102,11 @@ module Core.Parser.Parser where
        <|> try (reserved "float" $> FloatE)
        <|> try (reserved "void" $> VoidE)
        <|> try (reserved "bool" $> BoolE)
-       <|> arrow <|> generic <|> array
+       <|> asyncE <|> arrow <|> generic <|> array
        <|> parens type'
+
+  asyncE :: Parser Declaration
+  asyncE = reserved "async" *> (AsyncE <$> type')
 
   tuple :: Parser Declaration
   tuple = do
@@ -397,6 +401,7 @@ module Core.Parser.Parser where
   functionStmt :: Pure Statement
   functionStmt = do
     s <- getPosition
+    isAsync <- isJust <$> optionMaybe (reserved "async")
     reserved "fun"
     name <- identifier
     gen <- fromMaybe [] <$> optionMaybe generics
@@ -406,7 +411,8 @@ module Core.Parser.Parser where
     ret <- optionMaybe type'
     body <- spaces *> block
     e <- getPosition
-    return $ Assignment (name :@ (Arrow gen <$> sequence argsTy <*> ret)) (Lambda gen args' body :> (s, e)) :> (s, e)
+    let body' = if isAsync then Async body :> (s, e) else body
+    return $ Assignment (name :@ (Arrow gen <$> sequence argsTy <*> ret)) (Lambda gen args' body' :> (s, e)) :> (s, e)
 
   -- Expression parsing --
 
@@ -417,6 +423,8 @@ module Core.Parser.Parser where
   term = try float <|> number <|> stringLit <|> charLit <|> list
       <|> (match <?> "pattern matching")
       <|> (throw <?> "expression catcher")
+      <|> (async <?> "asynchronous expression")
+      <|> (await <?> "await expression")
       <|> (block <?> "sequence")
       <|> (letIn <?> "let expression")
       <|> (function <?> "lambda")
@@ -424,6 +432,22 @@ module Core.Parser.Parser where
       <|> (structure <?> "structure")
       <|> (variable <?> "variable")
       <|> (parens expression <?> "expression")
+
+  async :: Pure Expression
+  async = do
+    s <- getPosition
+    reserved "async"
+    expr <- block
+    e <- getPosition
+    return (Async expr :> (s, e))
+
+  await :: Pure Expression
+  await = do
+    s <- getPosition
+    reserved "await"
+    e <- getPosition
+    expr <- expression
+    return (Await expr :> (s, e))
 
   throw :: Pure Expression
   throw = do

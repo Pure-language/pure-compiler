@@ -1,7 +1,8 @@
+{-# LANGUAGE DeriveFunctor #-}
 module Core.Parser.AST.Literal where
   import Text.Parsec (SourcePos)
   data Located a = a :> (SourcePos, SourcePos)
-    deriving (Eq)
+    deriving (Eq, Functor)
 
   instance Show a => Show (Located a) where
     show (a :> _) = show a

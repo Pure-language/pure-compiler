@@ -7,6 +7,7 @@ module Core.Parser.AST.Expression where
     | Arrow [Declaration] [Declaration] Declaration
     | StructE [(String, Declaration)]
     | AppE Declaration Declaration
+    | AsyncE Declaration
     | StrE | IntE | FloatE | CharE | VoidE | BoolE
     | Ref Declaration
     deriving (Show, Eq)
@@ -52,4 +53,6 @@ module Core.Parser.AST.Expression where
     | Reference (Located Expression)
     | Unreference (Located Expression)
     | Cast (Located Expression) [Declaration]
+    | Await (Located Expression)
+    | Async (Located Expression)
     deriving (Show, Eq)
