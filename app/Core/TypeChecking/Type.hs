@@ -459,13 +459,15 @@ module Core.TypeChecking.Type where
             file <- liftIO $ readFile path
             case parsePure path file of
               Right ast -> do
-                (v1, TypeState _ inst cls _ m, e1) <- runModuleCheck (takeDirectory path) ast
+                (v1, TypeState _ inst cls mod m, e1) <- runModuleCheck (takeDirectory path) ast
                 addModule path v1
                 (cls', (inst', m')) <- (,) <$> gets classEnv <*> ((,) <$> gets instances <*> gets macros)
+                mod' <- gets modules
                 modify $ \s -> s {
                   classEnv = filterClasses cls `M.union` cls',
                   instances = filterInstances inst `L.union` inst',
-                  macros = M.filter macroIsPublic m `M.union` m' }
+                  macros = M.filter macroIsPublic m `M.union` m',
+                  modules = mod `M.union` mod' }
                 return (Nothing, M.empty, filterEnv e1, [A.Import expr path])
               Left e -> do
                 let diag  = errorDiagnosticFromParseError Nothing "Parse error on input" Nothing e

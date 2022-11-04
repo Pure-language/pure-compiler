@@ -32,9 +32,10 @@ module Core.Compiler.Compiler where
   compileToplevel s (Extern n ret) = return []
   compileToplevel s (Record (name, ty) fields) = return []
   compileToplevel s (Import expr path) = do
-    xs <- case modules s M.! path of 
-      Module _ stmts -> 
+    xs <- case M.lookup path $ modules s of 
+      Just (Module _ stmts) -> 
         analyseIRModule . concat <$> mapM (compileToplevel s) stmts
+      _ -> error . show $ M.keys $  modules s
     (:[]) . IRImport xs . IRAwait . IRCall (IRVariable "import") . (:[]) <$> compileExpression expr
   compileToplevel s (Public stmts) = do
     stmt <- compileToplevel s stmts
