@@ -5,7 +5,7 @@ module Main where
   import Core.Parser.Parser (parsePure)
   import Text.Parsec.Error (errorMessages, errorPos, messageString)
   import Error.Diagnose.Compat.Parsec
-  import Error.Diagnose (addFile, printDiagnostic, stderr, defaultStyle, err, Position (Position), Marker (This), def, stdout, addReport, Note (Note))
+  import Error.Diagnose (addFile, printDiagnostic, stderr, defaultStyle, err, Position (Position), Marker (This), def, stdout, addReport)
   import Data.Void (Void)
   import Core.TypeChecking.Type (runCheck)
   import Text.Parsec.Pos
@@ -59,7 +59,7 @@ module Main where
           Nothing
           error
           [ (pos', This step) ]
-          (maybe [] ((:[]) . Note) msg)
+          (maybe [] ((:[])) msg)
 
     -- Create the diagnostic 
     let diagnostic  = addFile def file' x'
