@@ -12,7 +12,7 @@ module Core.TypeChecking.Unification where
   import Data.Align (Semialign(alignWith))
   import Data.List (delete, union)
   import Control.Monad (foldM)
-  import Debug.Trace (traceShow)
+  import Debug.Trace
   import Text.Parsec (SourcePos)
   import Data.Foldable (foldlM)
   import Core.TypeChecking.Type.AST (TypedStatement)
@@ -59,16 +59,20 @@ module Core.TypeChecking.Unification where
                 That b -> Right (M.singleton i (apply s2 b))
                 These a b -> mgu e (apply s1 a) (apply s2 b)) s1 s2
 
-  constraintCheck :: ConsEnv -> [Class] -> [Class] -> Either String Substitution
-  constraintCheck e cs1 cs2 = foldl compose M.empty <$> m
-    where m = sequence $ alignWith (\case
-                That a -> Right M.empty
-                This b -> Right M.empty
-                These a b -> mguClass e a b) cs1 cs2
+  unclass :: Class -> (String, Type)
+  unclass (IsIn c ts) = (c, ts)
 
+  constraintCheck :: ConsEnv -> [Class] -> [Class] -> Either String Substitution
+  constraintCheck e cs1 cs2 = m
+    where m = foldl (\s (x, y) -> do
+                --traceShowM (x, y)
+                let s' = mgu e (snd x) (snd y)
+                compose <$> s' <*> s) (Right M.empty) cls
+          cls = align (map unclass cs1) (map unclass cs2)
+ 
   mguClass :: ConsEnv -> Class -> Class -> Either String Substitution  
   mguClass e (IsIn c t) (IsIn c' t')
-    | c == c' = mguList e t t'
+    | c == c' = mgu e t t'
     | otherwise = Left $ "Classes " ++ show c ++ " and " ++ show c' ++ " do not match"
 
   mguList :: ConsEnv -> [Type] -> [Type] -> Either String Substitution
@@ -106,7 +110,7 @@ module Core.TypeChecking.Unification where
         else Left $ "Record " ++ show n ++ " does not match " ++ show (TRec fs')
     Just _ -> Left $ "Type " ++ show n ++ " is not a record"
   mgu e (ps1 :=> t1) (ps2 :=> t2) = 
-    compose <$> constraintCheck e ps1 ps2 <*> mgu e t1 t2
+    compose <$> mgu e t1 t2 <*> constraintCheck e ps1 ps2
   mgu e t (_ :=> t2) = mgu e t t2
   mgu e (_ :=> t) t2 = mgu e t t2
   mgu e a@(TApp n xs) b@(TApp n' xs') = 
@@ -117,7 +121,7 @@ module Core.TypeChecking.Unification where
     --               Left s -> Left s) (Right M.empty) $ zip xs xs'
     --       in compose <$> s <*> mgu n n'
     -- else Left $ "Type mismatch: " ++ show a ++ " and " ++ show b
-  mgu e t1@(TRec fs1) t2@(TRec fs2) = 
+  mgu e t1@(TRec fs1) t2@(TRec fs2) =
     let f = align fs1 fs2 `union` align fs2 fs1
       in foldM (\s (x, y) -> do
         s' <- mgu e (snd x) (snd y)

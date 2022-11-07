@@ -13,11 +13,11 @@ module Core.TypeChecking.Type.Definition where
     | RefT Type
     deriving (Eq, Ord)
     
-  data Class = IsIn String [Type]
+  data Class = IsIn String Type
     deriving (Eq, Ord)
   type InstanceName = String
   data Instance = ClassInstance {
-    instance' :: [Class],
+    instance' :: Class,
     name :: InstanceName,
     constraints :: [Class],
     public :: Bool,
@@ -38,7 +38,7 @@ module Core.TypeChecking.Type.Definition where
     deriving (Eq, Ord, Show)
 
   instance Show Class where
-    show (IsIn c ts) = c ++ " " ++ unwords (map show ts)
+    show (IsIn c ts) = c ++ " " ++ show ts
 
   instance Show Type where
     show (TVar i) = "t" ++ show i

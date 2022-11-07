@@ -13,7 +13,7 @@ module Core.TypeChecking.Type where
   import qualified Data.Map as M
   import Core.TypeChecking.Substitution (Types(free, apply), Substitution)
   import Data.Foldable (foldlM)
-  import Core.TypeChecking.Unification (mgu, check, constraintCheck, MonadType, Methods, TypeState(..), Module (Module), ClassEnv, align, Macro(..))
+  import Core.TypeChecking.Unification (mgu, mguClass, check, constraintCheck, MonadType, Methods, TypeState(..), Module (Module), ClassEnv, align, Macro(..))
   import Data.Either (isLeft, fromRight, isRight)
   import Data.Maybe (isNothing, fromMaybe, isJust)
   import qualified Core.TypeChecking.Type.AST as A
@@ -77,7 +77,7 @@ module Core.TypeChecking.Type where
   createType (Id name args) env = do
     case M.lookup name env of
       Just t -> do
-        let classes = map (\arg -> IsIn arg [t]) args
+        let classes = map (\arg -> IsIn arg t) args
         return (if null classes then t else classes :=> t)
       Nothing -> return (TId name)
   createType (Arrow annot args ret) env = do
@@ -103,7 +103,7 @@ module Core.TypeChecking.Type where
   replace :: Declaration -> M.Map String Type -> Type
   replace (Id a args) m = case M.lookup a m of
     Just t -> do
-      let classes = map (\arg -> IsIn arg [t]) args
+      let classes = map (\arg -> IsIn arg t) args
       if null classes then t else classes :=> t
     Nothing -> TId a
   replace (Arrow annot args t) m = map (`replace` m) args :-> replace t m
@@ -140,41 +140,42 @@ module Core.TypeChecking.Type where
   find' a subCls env = do
     (_, (_, c)) <- ask
     trimap concat concat concat . unzip3 <$> mapM
-      (\x@(IsIn _ [ty]) -> if isDirectTVar ty then
+      (\x@(IsIn _ ty) -> if isDirectTVar ty then
           return (map (\z@(IsIn cls tys) ->
-            A.Variable (cls ++ createTypeInstName tys) (appify z)) subCls,
+            A.Variable (cls ++ createTypeInstName [tys]) (appify z)) subCls,
             map (\z@(IsIn cls tys) ->
-              (cls ++ createTypeInstName tys, appify z)) subCls, [x])
-        else case map (B.first $ fromRight M.empty) $ filter (isRight . fst) $ map (\z@(ClassInstance cls' _ _ _ _) -> (constraintCheck c cls' [x], z)) env of
-        -- ff a superclass instance exists
-        [(s, ClassInstance [z@(IsIn cls t2)] name subCls' _ _)] -> do
-          -- finding the subinstances of a class
-          (subVar, subTC, cls) <- find' a (apply s subCls') env
-          let var = A.Variable name (apply s (appify z))
-            in return ([if null subVar
-              then var
-              else A.FunctionCall var subVar (apply s (appify z))], subTC, cls)
+              (cls ++ createTypeInstName [tys], appify z)) subCls, [x])
+        else do
+          case map (B.first $ fromRight M.empty) $ filter (isRight . fst) $ map (\z@(ClassInstance cls' _ _ _ _) -> (mguClass c cls' x, z)) env of
+            -- ff a superclass instance exists
+            [(s, ClassInstance z@(IsIn cls t2) name subCls' _ _)] -> do
+              -- finding the subinstances of a class
+              (subVar, subTC, cls) <- find' a (apply s subCls') env
+              let var = A.Variable name (apply s (appify z))
+                in return ([if null subVar
+                  then var
+                  else A.FunctionCall var subVar (apply s (appify z))], subTC, cls)
 
-        -- if instance contains generics, then it's must be resolved into
-        -- a arguments map
-        xs -> if containsTVar' (appify x)
-          then return (map (\z@(IsIn cls tys) ->
-            A.Variable (cls ++ createTypeInstName tys) (appify z)) subCls,
-            map (\z@(IsIn cls tys) ->
-              (cls ++ createTypeInstName tys, appify z)) subCls, [x])
-          else
-            -- if instance does not contain generics, then it must be an error
-            if null xs
-              then throwError ("No instance found for " ++ show x, Nothing, a)
-              else case filter (isDefault . snd) xs of
-                [(s, ClassInstance [z@(IsIn cls t2)] name subCls' _ _)] -> do
-                  -- finding the subinstances of a class
-                  (subVar, subTC, cls) <- find' a (apply s subCls') env
-                  let var = A.Variable name (apply s (appify z))
-                    in return ([if null subVar
-                      then var
-                      else A.FunctionCall var subVar (apply s (appify z))], subTC, cls)
-                _ -> throwError ("Instances " ++ L.intercalate ", " (map (\(_, ClassInstance (x:xs) _ _ _ _) -> show x) xs) ++ " overlaps for " ++ show x, Nothing, a)) subCls
+            -- if instance contains generics, then it's must be resolved into
+            -- a arguments map
+            xs -> if containsTVar' (appify x)
+              then return (map (\z@(IsIn cls tys) ->
+                A.Variable (cls ++ createTypeInstName [tys]) (appify z)) subCls,
+                map (\z@(IsIn cls tys) ->
+                  (cls ++ createTypeInstName [tys], appify z)) subCls, [x])
+              else do
+                -- if instance does not contain generics, then it must be an error
+                if null xs
+                  then throwError ("No instance found for " ++ show x, Nothing, a)
+                  else case filter (isDefault . snd) xs of
+                    [(s, ClassInstance z@(IsIn cls t2) name subCls' _ _)] -> do
+                      -- finding the subinstances of a class
+                      (subVar, subTC, cls) <- find' a (apply s subCls') env
+                      let var = A.Variable name (apply s (appify z))
+                        in return ([if null subVar
+                          then var
+                          else A.FunctionCall var subVar (apply s (appify z))], subTC, cls)
+                    _ -> throwError ("Instances " ++ L.intercalate ", " (map (\(_, ClassInstance x _ _ _ _) -> show x) xs) ++ " overlaps for " ++ show x, Nothing, a)) subCls
 
   getTVars :: Type -> [Type]
   getTVars (TApp t xs) = getTVars t ++ getTVars xs
@@ -182,7 +183,7 @@ module Core.TypeChecking.Type where
   getTVars (t1 :-> t2) = concatMap getTVars t1 ++ getTVars t2
   getTVars (TRec xs) = concatMap (getTVars . snd) xs
   getTVars (RefT t) = getTVars t
-  getTVars (ps :=> t) = concatMap (\(IsIn _ ty) -> concatMap getTVars ty) ps ++ getTVars t
+  getTVars (ps :=> t) = concatMap (\(IsIn _ ty) -> getTVars ty) ps ++ getTVars t
   getTVars _ = []
 
   containsTVar :: Int -> Type -> Bool
@@ -192,12 +193,12 @@ module Core.TypeChecking.Type where
   containsTVar i _ = False
 
   appearsInTC :: Type -> Type -> [Class]
-  appearsInTC (TVar t) (ps :=> _) = filter (\(IsIn _ p) -> any (containsTVar t) p) ps
+  appearsInTC (TVar t) (ps :=> _) = filter (\(IsIn _ p) -> containsTVar t p) ps
   appearsInTC t (t1 :-> t2) = concatMap (appearsInTC t) t1 ++ appearsInTC t t2
   appearsInTC _ _ = []
 
   createInstName :: [Class] -> String
-  createInstName (IsIn name ty:ts) = name ++ createTypeInstName ty ++ createInstName ts
+  createInstName (IsIn name ty:ts) = name ++ createTypeInstName [ty] ++ createInstName ts
   createInstName [] = ""
 
   containsTVar' :: Type -> Bool
@@ -221,7 +222,7 @@ module Core.TypeChecking.Type where
           go (x:xs) t = TApp (go xs t) x
 
   appify :: Class -> Type
-  appify (IsIn c ty) = buildFun ty (TId c)
+  appify (IsIn c ty) = TApp (TId c) ty
 
   isProject :: String -> [A.TypedStatement] -> [A.TypedStatement]
   isProject s x = if null s then x else []
@@ -350,13 +351,15 @@ module Core.TypeChecking.Type where
     ret' <- createType ret table
     (map', env) <- ask
     return (Just Void, M.empty, B.first (M.insert n (generalize env ret' b)) env, [A.Extern n ret'])
-  tyStatement (p, b) (Class annots name fields :> pos) = do
+  tyStatement (p, b) (Class annot name fields :> pos) = do
     -- Creating a fresh type foreach type of reunion
-    generic <- mapM (const fresh) annots
+    generic <- fresh
     -- Recreating a map mapping generic name to type
-    let table = M.fromList (zip (map (\(Id n _) -> n) annots) generic)
+    let table = case annot of
+          (Id n _) -> M.singleton n generic
+          _ -> M.empty
     let header = buildFun (M.elems table) (TId name)
-    let cls = IsIn name (M.elems table)
+    let cls = IsIn name (M.elems table !! 0)
 
     tvs <- mapM (\(name, ty) -> createType ty table >>= \ty' -> return (name A.:@ ([cls] :=> ty'))) fields
     (_, env) <- ask
@@ -388,10 +391,10 @@ module Core.TypeChecking.Type where
   tyStatement (p, isPub) (Instance subs name ty fields isDefault :> pos) = do
     argsMap <- mapM (const fresh) subs
     let table = M.fromList (zip (map fst subs) argsMap)
-    let subClasses = concatMap (\(name, ty) -> map (\x -> IsIn x [table M.! name]) ty) subs
+    let subClasses = concatMap (\(name, ty) -> map (\x -> IsIn x (table M.! name)) ty) subs
 
     header <- createType ty table
-    let cls' = IsIn name [header]
+    let cls' = IsIn name header
     let name' = createInstName [cls']
 
     fields' <- mapM (\(name', method) ->
@@ -404,13 +407,12 @@ module Core.TypeChecking.Type where
                 Nothing -> throwError ("Method " ++ name' ++ " not found in class " ++ name, Nothing, pos)
             Nothing -> throwError ("Class " ++ name ++ " not found", Nothing, pos)
           -- create an instance of the method
-          tv <- fresh
           ty <- tyInstantiate ty'
 
           (t1, s1, e, v') <- local (B.first (`M.union` table)) $ tyExpression method
           -- unifying it with instantatied method type
           (_, (_, c)) <- ask
-          let s2 =  mgu c ty t1
+          let s2 =  compose <$> mgu c ty t1 <*> mgu c t1 ty
           case s2 of
             Right s -> do
               (_, e) <- ask
@@ -425,7 +427,7 @@ module Core.TypeChecking.Type where
     let s = map (\(_, _, s) -> s) fields'
     let s' = foldl1 compose s
 
-    freshInstance (ClassInstance (apply s' [cls']) name' (apply s' subClasses) isPub isDefault)
+    freshInstance (ClassInstance (apply s' cls') name' (apply s' subClasses) isPub isDefault)
 
     (fields'', args, tys) <- unzip3 <$> forM (zip fields'' tys) (\(v', t1') -> do
       (v'', args, preds) <- resolveInstances (apply s' v' :> pos)
@@ -438,8 +440,8 @@ module Core.TypeChecking.Type where
     let ty' = (cls' : subClasses) :=> (tys :-> datType)
     let call = A.FunctionCall (A.Constructor name ty') (apply s' fields'') datType
 
-    let subConstraints = map (\(IsIn cls ty) -> buildFun (apply s' ty) (TId cls)) subClasses
-    let subNames = map (\(IsIn cls ty) -> cls ++ createTypeInstName (apply s' ty)) subClasses
+    let subConstraints = map (\(IsIn cls ty) -> TApp (TId cls) (apply s' ty)) subClasses
+    let subNames = map (\(IsIn cls ty) -> cls ++ createTypeInstName [apply s' ty]) subClasses
     let args' = L.nub $ concat args
     return (Just Void, M.empty, (M.empty, M.empty), [A.Assignment (name' A.:@ datType) (if null args' then call else A.Lambda (map annotate args') call (map snd args' :-> datType))])
   tyStatement (dir, _) (Import mod :> pos) = do
