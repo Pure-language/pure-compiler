@@ -21,7 +21,7 @@ module Core.Parser.AST.Expression where
     | Enum String [Declaration] [(String, Maybe [Declaration])]
     | Extern [Declaration] String Declaration
     | Instance [(String, [String])] String Declaration [(String, Located Expression)] Bool
-    | Class [Declaration] String [(String, Declaration)]
+    | Class Declaration String [(String, Declaration)]
     | Record String [Declaration] [(String, Declaration)]
     | Import [String]
     | Public (Located Statement)

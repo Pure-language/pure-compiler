@@ -220,7 +220,7 @@ module Core.Parser.Parser where
     s <- getPosition
     reserved "extension"
     name <- identifier
-    gen <- fromMaybe [] <$> optionMaybe generics
+    gen <- (!!0) <$> generics
     reservedOp "{"
     fields <- commaSep field
     spaces *> reservedOp "}"
