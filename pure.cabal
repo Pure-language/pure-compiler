@@ -58,7 +58,7 @@ executable pure
         ConstraintKinds 
         FlexibleContexts 
     build-depends:    
-        base ^>=4.14.3.0
+        base >=4.14.3.0
       , parsec
       , diagnose
       , containers
