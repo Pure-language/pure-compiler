@@ -1,0 +1,19 @@
+import std::classes::monad
+import std::io
+
+extern Array: struct {
+  prototype: struct {
+    concat: struct {
+      call: fun<a>([a], [a]) [a]
+    }
+  }
+}
+
+pub let concat = fun(x, y) Array.prototype.concat.call(x, y)
+
+pub impl Functor for [] {
+  let map = fun(ls, f) match ls {
+    [] = [],
+    [x, *xs] = concat([f(x)], map(xs, f))
+  }
+}
